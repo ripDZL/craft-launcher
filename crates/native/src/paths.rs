@@ -11,7 +11,7 @@ pub struct Paths {
     pub cache: PathBuf,
 }
 
-const DIR: &str = if cfg!(any(target_os = "macos", target_os = "windows")) { "ArtCraft Launcher" } else { "artcraft-launcher" };
+const DIR: &str = if cfg!(any(target_os = "macos", target_os = "windows")) { "SuiteDock" } else { "suitedock" };
 
 impl Paths {
     pub fn new() -> Result<Self, String> {
@@ -66,9 +66,9 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> 
 }
 
 /// Portable mode: a `portable.txt` beside the executable keeps everything in
-/// `ArtCraftLauncherData` next to it (the Windows portable zip ships one).
+/// `SuiteDockData` next to it (the Windows portable zip ships one).
 pub fn portable_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    dir.join("portable.txt").is_file().then(|| dir.join("ArtCraftLauncherData"))
+    dir.join("portable.txt").is_file().then(|| dir.join("SuiteDockData"))
 }

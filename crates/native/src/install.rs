@@ -14,9 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
-use artcraft_launcher_core::protocol::JobPhase;
-use artcraft_launcher_core::release::{self, Asset, Release};
-use artcraft_launcher_core::{CraftApp, InstallSource, Installed, PackageKind};
+use suitedock_core::protocol::JobPhase;
+use suitedock_core::release::{self, Asset, Release};
+use suitedock_core::{CraftApp, InstallSource, Installed, PackageKind};
 
 use crate::http::{Http, Stop, Transfer, Verified};
 use crate::manifest::Record;
@@ -442,7 +442,7 @@ pub mod macos {
             return Ok(parent);
         }
         let system = PathBuf::from("/Applications");
-        let probe = system.join(".artcraft-launcher-write-test");
+        let probe = system.join(".suitedock-write-test");
         if std::fs::write(&probe, b"").is_ok() {
             let _ = std::fs::remove_file(&probe);
             return Ok(system);

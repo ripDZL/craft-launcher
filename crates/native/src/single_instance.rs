@@ -9,7 +9,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 const PORT: u16 = 47_413;
-const MESSAGE: &[u8] = b"artcraft-launcher:show";
+const MESSAGE: &[u8] = b"suitedock:show";
 
 pub enum Instance {
     /// We're the only one. A message arrives on the receiver whenever another start asks to show

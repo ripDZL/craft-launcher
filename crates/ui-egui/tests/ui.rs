@@ -1,17 +1,17 @@
 //! Drives the launcher UI against a fake backend: what's shown for each status, and which
-//! commands the buttons send. `ARTCRAFT_LAUNCHER_SNAPSHOTS=<dir>` also saves screenshots.
+//! commands the buttons send. `SUITEDOCK_SNAPSHOTS=<dir>` also saves screenshots.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use artcraft_launcher_core::protocol::{Backend, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PausedDownload, Source};
-use artcraft_launcher_core::release::{Asset, Release};
-use artcraft_launcher_core::status::InstallSource;
-use artcraft_launcher_core::{Arch, Installed, Os, Platform, SUITE, version};
-use artcraft_launcher_ui_egui::settings::ViewMode;
-use artcraft_launcher_ui_egui::{Host, LauncherUi, Settings};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
+use suitedock_core::protocol::{Backend, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PausedDownload, Source};
+use suitedock_core::release::{Asset, Release};
+use suitedock_core::status::InstallSource;
+use suitedock_core::{Arch, Installed, Os, Platform, SUITE, version};
+use suitedock_ui_egui::settings::ViewMode;
+use suitedock_ui_egui::{Host, LauncherUi, Settings};
 
 const NOW: i64 = 1_791_500_000;
 
@@ -115,9 +115,9 @@ fn harness(view: ViewMode, theme: egui::Theme, manage: bool) -> (Harness<'static
             {
                 let mut s = settings.clone();
                 s.theme = if theme == egui::Theme::Dark {
-                    artcraft_launcher_ui_egui::theme::ThemeChoice::Dark
+                    suitedock_ui_egui::theme::ThemeChoice::Dark
                 } else {
-                    artcraft_launcher_ui_egui::theme::ThemeChoice::Light
+                    suitedock_ui_egui::theme::ThemeChoice::Light
                 };
                 *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), s));
             }
@@ -132,7 +132,7 @@ fn harness(view: ViewMode, theme: egui::Theme, manage: bool) -> (Harness<'static
 }
 
 fn snapshot(h: &mut Harness<'_, Option<LauncherUi>>, name: &str) {
-    let Some(dir) = std::env::var_os("ARTCRAFT_LAUNCHER_SNAPSHOTS") else { return };
+    let Some(dir) = std::env::var_os("SUITEDOCK_SNAPSHOTS") else { return };
     let img = h.render().unwrap();
     img.save(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
 }
@@ -151,7 +151,7 @@ fn grid_shows_every_status_and_installs_on_click() {
     h.get_by_label("Like Adobe Photoshop®");
     // The window has no title bar of its own here (the web build, and the tests).
     assert!(h.query_by_label("Close").is_none());
-    assert!(h.query_all_by_label_contains("Discord").count() >= 2); // header link and footer link
+    assert!(h.query_by_label("Discord").is_none()); // main-window community links default to hidden
     h.get_by_label_contains("Adobe, Photoshop, Illustrator");
     assert!(h.query_all_by_label("Coming soon").count() >= 1);
     h.get_by_label_contains("48 MB of 131 MB");
@@ -168,7 +168,7 @@ fn downloads_can_be_paused_resumed_and_discarded() {
     h.run_steps(4);
     // Bring the paused and reconnecting apps on screen.
     if let Some(l) = h.state_mut().as_mut() {
-        l.settings.filter = artcraft_launcher_ui_egui::settings::Filter::NotInstalled;
+        l.settings.filter = suitedock_ui_egui::settings::Filter::NotInstalled;
     }
     h.run_steps(6);
     snapshot(&mut h, "grid-downloads-dark");
@@ -275,21 +275,19 @@ fn settings_link_to_discord() {
     h.run_steps(4);
     snapshot(&mut h, "settings-dark");
     h.get_by_label("Questions, ideas and news from the ArtCraft team");
-    // The header button and the one in Settings.
-    assert!(h.query_all_by_label_contains("Discord").count() >= 2);
+    // Settings must provide the community link even with all main-window links hidden.
+    h.get_by_label("Join the Discord");
+    assert!(!h.state().as_ref().unwrap().settings.show_social_links);
 }
 
 #[test]
 fn links_to_the_website_github_and_each_apps_pages() {
     let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
     h.run_steps(6);
-    // Footer: website, GitHub and Discord.
-    for label in ["Website", "GitHub", "Discord"] {
-        assert!(h.query_all_by_label(label).count() >= 1, "{label}");
-    }
-    // Cards: every app links to its repo; only the seven classic apps have a website (plus the footer's).
-    let shown_cards = h.query_all_by_label("GitHub").count() - 1;
-    let shown_sites = h.query_all_by_label("Website").count() - 1;
+    // The general footer links disappear, but each app keeps its own documentation links.
+    assert!(h.query_by_label("Discord").is_none());
+    let shown_cards = h.query_all_by_label("GitHub").count();
+    let shown_sites = h.query_all_by_label("Website").count();
     assert!(shown_cards >= 7, "{shown_cards}");
     assert_eq!(shown_sites, 7, "only classic apps have website pages");
     // The table's … menu has the app's GitHub repo and, for a new app, no website yet.
@@ -331,6 +329,11 @@ fn all_opened(h: &mut Harness<'_, Option<LauncherUi>>, label: &str) -> Vec<Strin
 fn links_open_the_right_pages() {
     let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
     h.run_steps(6);
+    // The user can restore the original header/footer links.
+    if let Some(l) = h.state_mut().as_mut() {
+        l.settings.show_social_links = true;
+    }
+    h.run_steps(3);
     assert_eq!(click_opens(&mut h, "Discord").as_deref(), Some("https://discord.gg/artcraft"));
     // The footer's ArtCraft links and each card's own pages.
     let github = all_opened(&mut h, "GitHub");
@@ -349,6 +352,67 @@ fn links_open_the_right_pages() {
     h.get_all_by_label("…").next().unwrap().click();
     h.run_steps(3);
     assert_eq!(click_opens(&mut h, "All releases").as_deref(), Some("https://github.com/storytold/photocraft/releases"));
+}
+
+#[test]
+fn social_links_toggle_persists_and_keeps_settings_links() {
+    let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
+    h.run_steps(6);
+    assert!(h.query_by_label("Discord").is_none());
+    assert!(h.query_by_label("X").is_none());
+    h.get_by_label("Settings").click();
+    h.run_steps(4);
+    h.get_by_label("Join the Discord");
+    h.get_by_label("X"); // Icons remain available inside Settings.
+    h.get_by_label("Show community and social links outside Settings").click();
+    h.run_steps(3);
+    assert!(h.state().as_ref().unwrap().settings.show_social_links);
+    h.get_by_label("Done").click();
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Discord").count() >= 2);
+    h.get_by_label("X");
+    let saved = serde_json::to_string(&h.state().as_ref().unwrap().settings).unwrap();
+    let restored: Settings = serde_json::from_str(&saved).unwrap();
+    assert!(restored.show_social_links);
+    // Older settings files had no such property; hiding is the new default.
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert!(!old.show_social_links);
+    // The same control hides the links again without removing them from Settings.
+    h.get_by_label("Settings").click();
+    h.run_steps(4);
+    h.get_by_label("Show community and social links outside Settings").click();
+    h.run_steps(3);
+    h.get_by_label("Join the Discord");
+    h.get_by_label("Done").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Discord").is_none());
+    for (name, _) in &suitedock_core::catalog::SOCIAL {
+        assert!(h.query_by_label(name).is_none(), "{name}");
+    }
+    let saved = serde_json::to_string(&h.state().as_ref().unwrap().settings).unwrap();
+    assert!(!serde_json::from_str::<Settings>(&saved).unwrap().show_social_links);
+}
+
+#[test]
+fn community_links_can_be_restored_in_table_and_web_views() {
+    for (view, manage) in [(ViewMode::Table, true), (ViewMode::Grid, false), (ViewMode::Table, false)] {
+        let (mut h, _) = harness(view, egui::Theme::Light, manage);
+        h.run_steps(6);
+        assert!(h.query_by_label("Discord").is_none());
+        h.get_by_label("Settings").click();
+        h.run_steps(4);
+        for (name, _) in &suitedock_core::catalog::SOCIAL {
+            h.get_by_label(name);
+        }
+        h.get_by_label("Show community and social links outside Settings").click();
+        h.run_steps(3);
+        h.get_by_label("Done").click();
+        h.run_steps(3);
+        assert!(h.query_all_by_label("Discord").count() >= 2);
+        for (name, _) in &suitedock_core::catalog::SOCIAL {
+            h.get_by_label(name);
+        }
+    }
 }
 
 #[test]
@@ -391,7 +455,7 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
     }
     let sent = Rc::new(RefCell::new(Vec::new()));
     let mut events = events();
-    events.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
+    events.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
     let shared_events = Rc::new(RefCell::new(Vec::new()));
     struct Scripted {
         inner: Fake,
@@ -435,14 +499,12 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
         None,
     );
     h.run_steps(6);
-    h.get_by_label_contains("ArtCraft Launcher 0.2.0 is available");
+    h.get_by_label_contains("SuiteDock 0.2.0 is available");
     h.get_by_label("Update and restart").click();
     h.run_steps(2);
     assert!(sent.borrow().contains(&Command::UpdateLauncher));
     // Downloading: the banner shows progress instead of the button.
-    shared_events
-        .borrow_mut()
-        .push(Event::Progress { app: "artcraft-launcher".into(), phase: JobPhase::Downloading { done: 5 << 20, total: 10 << 20 } });
+    shared_events.borrow_mut().push(Event::Progress { app: "suitedock".into(), phase: JobPhase::Downloading { done: 5 << 20, total: 10 << 20 } });
     h.run_steps(3);
     assert!(h.query_by_label("Update and restart").is_none());
     assert!(!quit.get());
@@ -466,7 +528,7 @@ fn the_current_desktop_setting_is_only_offered_where_the_os_has_desktops() {
 
 #[test]
 fn feed_announcements_and_alerts_show_until_dismissed() {
-    use artcraft_launcher_core::feed::Notice;
+    use suitedock_core::feed::Notice;
     let notice = |id: &str, title: &str, link: Option<&str>| Notice {
         id: id.into(),
         title: title.into(),
@@ -514,7 +576,7 @@ fn feed_announcements_and_alerts_show_until_dismissed() {
 
 #[test]
 fn automatic_checks_run_every_five_minutes() {
-    use artcraft_launcher_ui_egui::settings::CheckEvery;
+    use suitedock_ui_egui::settings::CheckEvery;
     assert_eq!(Settings::default().check_every.seconds(), Some(300));
     // Older saved choices still load, and mean "automatically" now.
     assert_eq!(CheckEvery::Day.seconds(), Some(300));
@@ -566,8 +628,8 @@ fn web_build_offers_downloads() {
 fn custom_title_bar_has_window_buttons() {
     struct FramelessHost;
     impl Host for FramelessHost {
-        fn title_bar(&self) -> artcraft_launcher_ui_egui::TitleBar {
-            artcraft_launcher_ui_egui::TitleBar::Custom
+        fn title_bar(&self) -> suitedock_ui_egui::TitleBar {
+            suitedock_ui_egui::TitleBar::Custom
         }
     }
     let mut backend = Some(Fake { events: events(), sent: Rc::new(RefCell::new(Vec::new())), manage: true, clock: Rc::new(Cell::new(NOW)) });

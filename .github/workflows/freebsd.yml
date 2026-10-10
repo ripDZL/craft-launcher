@@ -55,5 +55,5 @@ jobs:
             # The release package, as release.yml builds it. Free the debug build's disk first.
             rm -rf target/debug
             CARGO_BUILD_JOBS=4 bash packaging/freebsd/package.sh
-            tar -tzf dist/release/artcraft-launcher-*-freebsd-x86_64.tar.gz \
-              | grep -E '/bin/artcraft-launcher$|/share/applications/ai\.storyteller\.artcraft-launcher\.desktop$|/share/doc/artcraft-launcher/LICENSE-MIT$'
+            tar -tzf dist/release/suitedock-*-freebsd-x86_64.tar.gz \
+              | grep -E '/bin/suitedock$|/share/applications/ai\.storyteller\.suitedock\.desktop$|/share/doc/suitedock/LICENSE-MIT$'

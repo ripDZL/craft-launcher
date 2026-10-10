@@ -1,5 +1,5 @@
 # Release pipeline: every push to `release` builds installers for every platform and creates or
-# updates the draft GitHub Release "ArtCraft Launcher v<version>" with SHA256SUMS.txt.
+# updates the draft GitHub Release "SuiteDock v<version>" with SHA256SUMS.txt.
 # Recipe: craftrules release/playbook.md (photocraft is the reference implementation).
 #
 # Only the jobs that read secrets run in the `release` environment (restricted to the `release`
@@ -31,7 +31,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  ARTCRAFT_LAUNCHER_BUILD_SHA: ${{ github.sha }}
+  SUITEDOCK_BUILD_SHA: ${{ github.sha }}
   INPUT_VERSION: ${{ inputs.version }}
 
 jobs:
@@ -60,16 +60,16 @@ jobs:
             echo "date=$(date -u +%Y-%m-%d)"
             echo "prerelease=$pre"
           } >>"$GITHUB_OUTPUT"
-          echo "### ArtCraft Launcher v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+          echo "### SuiteDock v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
 
   macos:
     name: macOS universal
     needs: version
-    runs-on: macos-15-xlarge  # M2 Pro larger runner; use only in release.yml (actions_macos_xl budget caps spend)
+    runs-on: macos-15
     environment: release
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -80,7 +80,7 @@ jobs:
           key: release-macos-universal
       - name: Apply version override
         if: inputs.version != ''
-        run: cargo xtask version set "$ARTCRAFT_LAUNCHER_VERSION"
+        run: cargo xtask version set "$SUITEDOCK_VERSION"
       - name: Import signing certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -127,8 +127,8 @@ jobs:
           # .github/workflows/windows-arm64.yml installs and checks it on ARM64 hardware.
           - { arch: arm64, target: aarch64-pc-windows-msvc }
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -140,7 +140,7 @@ jobs:
       - name: Apply version override
         if: inputs.version != ''
         shell: bash
-        run: cargo xtask version set "$ARTCRAFT_LAUNCHER_VERSION"
+        run: cargo xtask version set "$SUITEDOCK_VERSION"
       - name: Install WiX
         shell: pwsh
         run: |
@@ -177,8 +177,8 @@ jobs:
           - { arch: x86_64, runner: ubuntu-22.04, deb: amd64 }
           - { arch: aarch64, runner: ubuntu-22.04-arm, deb: arm64 }
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
       NFPM_VERSION: 2.47.0
     steps:
       - uses: actions/checkout@v4
@@ -199,21 +199,21 @@ jobs:
           key: release-linux-${{ matrix.arch }}
       - name: Apply version override
         if: inputs.version != ''
-        run: cargo xtask version set "$ARTCRAFT_LAUNCHER_VERSION"
+        run: cargo xtask version set "$SUITEDOCK_VERSION"
       - name: Build and package (AppImage, deb, rpm, tar.gz)
         run: packaging/linux/package.sh
       - name: Check the packages
         run: |
           dpkg-deb --info dist/release/*.deb
-          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/artcraft-launcher$|metainfo|applications'
-          ldd target/release/artcraft-launcher
-          python3 -c "import yaml; m = yaml.safe_load(open('packaging/linux/flatpak/ai.storyteller.artcraft-launcher.yml')); assert m['id'] == 'ai.storyteller.artcraft-launcher'"
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/suitedock$|metainfo|applications'
+          ldd target/release/suitedock
+          python3 -c "import yaml; m = yaml.safe_load(open('packaging/linux/flatpak/io.github.ripdzl.suitedock.yml')); assert m['id'] == 'io.github.ripdzl.suitedock'"
           for appimage in dist/release/*.AppImage; do
             chmod +x "$appimage"
-            # Update information is embedded (repo craft-launcher, files artcraft-launcher-*), and
+            # Update information is embedded (repo craft-launcher, files suitedock-*), and
             # the .zsync for delta updates sits beside it.
             "$appimage" --appimage-updateinformation \
-              | grep -Fx "gh-releases-zsync|${GITHUB_REPOSITORY%%/*}|${GITHUB_REPOSITORY#*/}|latest|artcraft-launcher-*-linux-${{ matrix.arch }}.AppImage.zsync"
+              | grep -Fx "gh-releases-zsync|${GITHUB_REPOSITORY%%/*}|${GITHUB_REPOSITORY#*/}|latest|suitedock-*-linux-${{ matrix.arch }}.AppImage.zsync"
             test -s "$appimage.zsync"
           done
       - uses: actions/upload-artifact@v4
@@ -236,8 +236,8 @@ jobs:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -253,7 +253,7 @@ jobs:
           # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build the Flatpak bundle
-        run: packaging/linux/flatpak-bundle.sh "dist/linux/artcraft-launcher-$ARTCRAFT_LAUNCHER_VERSION-linux-${{ matrix.arch }}.tar.gz"
+        run: packaging/linux/flatpak-bundle.sh "dist/linux/suitedock-$SUITEDOCK_VERSION-linux-${{ matrix.arch }}.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: release-flatpak-${{ matrix.arch }}
@@ -269,8 +269,8 @@ jobs:
     timeout-minutes: 180
     # No `environment: release`: this job signs nothing, so it gets no release secrets.
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
       - name: Build and package in a FreeBSD VM (tar.gz)
@@ -282,7 +282,7 @@ jobs:
           cpu: 4
           mem: 12288
           # Passed into the VM by name; never templated into the script below.
-          envs: "ARTCRAFT_LAUNCHER_VERSION ARTCRAFT_LAUNCHER_BUILD_DATE ARTCRAFT_LAUNCHER_BUILD_SHA INPUT_VERSION"
+          envs: "SUITEDOCK_VERSION SUITEDOCK_BUILD_DATE SUITEDOCK_BUILD_SHA INPUT_VERSION"
           # The FreeBSD CI packages, plus bash for the packaging script.
           prepare: |
             pkg install -y bash git curl pkgconf cmake python3 libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader fontconfig freetype2
@@ -292,11 +292,11 @@ jobs:
             . "$HOME/.cargo/env"
             git config --global --add safe.directory "$PWD"
             # Build outside the checkout so only dist/ is copied back out of the VM.
-            export CARGO_TARGET_DIR=/var/tmp/artcraft-launcher-target CARGO_BUILD_JOBS=4
-            if [ -n "$INPUT_VERSION" ]; then cargo xtask version set "$ARTCRAFT_LAUNCHER_VERSION"; fi
+            export CARGO_TARGET_DIR=/var/tmp/suitedock-target CARGO_BUILD_JOBS=4
+            if [ -n "$INPUT_VERSION" ]; then cargo xtask version set "$SUITEDOCK_VERSION"; fi
             bash packaging/freebsd/package.sh
-            tar -tzf dist/release/artcraft-launcher-*-freebsd-x86_64.tar.gz \
-              | grep -E '/bin/artcraft-launcher$|/share/applications/ai\.storyteller\.artcraft-launcher\.desktop$|/share/doc/artcraft-launcher/LICENSE-MIT$'
+            tar -tzf dist/release/suitedock-*-freebsd-x86_64.tar.gz \
+              | grep -E '/bin/suitedock$|/share/applications/ai\.storyteller\.suitedock\.desktop$|/share/doc/suitedock/LICENSE-MIT$'
       - uses: actions/upload-artifact@v4
         with:
           name: release-freebsd-x86_64
@@ -308,8 +308,8 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     env:
-      ARTCRAFT_LAUNCHER_VERSION: ${{ needs.version.outputs.version }}
-      ARTCRAFT_LAUNCHER_BUILD_DATE: ${{ needs.version.outputs.date }}
+      SUITEDOCK_VERSION: ${{ needs.version.outputs.version }}
+      SUITEDOCK_BUILD_DATE: ${{ needs.version.outputs.date }}
       TRUNK_VERSION: 0.21.14
     steps:
       - uses: actions/checkout@v4
@@ -326,7 +326,7 @@ jobs:
           trunk --version
       - name: Apply version override
         if: inputs.version != ''
-        run: cargo xtask version set "$ARTCRAFT_LAUNCHER_VERSION"
+        run: cargo xtask version set "$SUITEDOCK_VERSION"
       - name: Build and zip
         run: packaging/web/package.sh
       - uses: actions/upload-artifact@v4
@@ -357,16 +357,16 @@ jobs:
         working-directory: artifacts
         run: |
           expected=(
-            "artcraft-launcher-$VERSION-macos-universal.dmg"
-            "artcraft-launcher-$VERSION-freebsd-x86_64.tar.gz"
-            "artcraft-launcher-web-$VERSION.zip"
+            "suitedock-$VERSION-macos-universal.dmg"
+            "suitedock-$VERSION-freebsd-x86_64.tar.gz"
+            "suitedock-web-$VERSION.zip"
           )
           for a in x64 x86 arm64; do
-            expected+=("artcraft-launcher-$VERSION-windows-$a.msi" "artcraft-launcher-$VERSION-windows-$a-portable.zip")
+            expected+=("suitedock-$VERSION-windows-$a.msi" "suitedock-$VERSION-windows-$a-portable.zip")
           done
           for a in x86_64 aarch64; do
             for ext in AppImage AppImage.zsync deb rpm tar.gz flatpak; do
-              expected+=("artcraft-launcher-$VERSION-linux-$a.$ext")
+              expected+=("suitedock-$VERSION-linux-$a.$ext")
             done
           done
           missing=0
@@ -383,7 +383,7 @@ jobs:
         working-directory: artifacts
         run: |
           tag="v$VERSION"
-          title="ArtCraft Launcher v$VERSION"
+          title="SuiteDock v$VERSION"
           pre=()
           if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
           if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then

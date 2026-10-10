@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=SuiteDock
+GenericName=App Launcher
+Comment=Install, update and launch the Craft App Suite
+Exec=suitedock
+TryExec=suitedock
+Icon=io.github.ripdzl.suitedock
+Terminal=false
+StartupNotify=true
+StartupWMClass=suitedock
+Categories=Utility;PackageManager;
+Keywords=artcraft;craft;launcher;installer;updater;photocraft;filmcraft;apps;

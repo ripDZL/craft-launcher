@@ -1,4 +1,4 @@
-//! ArtCraft Launcher updating itself.
+//! SuiteDock updating itself.
 //!
 //! The new version is downloaded and verified like any Craft App, then swapped in the way this
 //! copy was installed. A small helper process waits for this launcher to exit, finishes anything
@@ -10,7 +10,7 @@
 //! |---|---|
 //! | macOS `.app` | copy the new bundle from the DMG over this one (fine while running), reopen it |
 //! | Windows MSI (per-user, any folder) | after exit, run the new MSI (it reinstalls into the same folder), then start the exe |
-//! | Windows portable zip | after exit, unzip over this folder (settings in `ArtCraftLauncherData` stay) |
+//! | Windows portable zip | after exit, unzip over this folder (settings in `SuiteDockData` stay) |
 //! | Linux AppImage | rename the new AppImage over this one (fine while running), start it |
 //! | Linux `.deb` / `.rpm` | the system package manager, with the password prompt; then restart |
 //!
@@ -18,14 +18,14 @@
 
 use std::path::{Path, PathBuf};
 
-use artcraft_launcher_core::PackageKind;
-use artcraft_launcher_core::catalog::LAUNCHER;
-use artcraft_launcher_core::platform::{Platform, pick_asset};
-use artcraft_launcher_core::protocol::JobPhase;
-use artcraft_launcher_core::release::Release;
-use artcraft_launcher_core::version::{self, Version};
+use suitedock_core::PackageKind;
+use suitedock_core::catalog::LAUNCHER;
+use suitedock_core::platform::{Platform, pick_asset};
+use suitedock_core::protocol::JobPhase;
+use suitedock_core::release::Release;
+use suitedock_core::version::{self, Version};
 #[cfg(target_os = "macos")]
-use artcraft_launcher_core::{InstallSource, Installed};
+use suitedock_core::{InstallSource, Installed};
 
 use crate::http::{Http, Stop};
 use crate::install::{self, Job};
@@ -35,7 +35,7 @@ use crate::process;
 /// How this running launcher was installed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Install {
-    /// The `ArtCraft Launcher.app` bundle.
+    /// The `SuiteDock.app` bundle.
     MacApp(PathBuf),
     /// The per-user Windows Installer package; the exe.
     Msi(PathBuf),
@@ -61,7 +61,7 @@ impl Install {
 
 /// Makes an installed copy believe it's this version, to try the self-update against the current
 /// release. The restart helper drops it, so it lasts one run.
-const PRETEND_VAR: &str = "ARTCRAFT_LAUNCHER_PRETEND_VERSION";
+const PRETEND_VAR: &str = "SUITEDOCK_PRETEND_VERSION";
 
 /// The version this launcher counts as (see [`PRETEND_VAR`]).
 pub fn current_version() -> Option<Version> {
@@ -72,7 +72,7 @@ pub fn current_version() -> Option<Version> {
 const JUST_UPDATED_FOR: i64 = 24 * 3600;
 
 /// Whether `release` is the version this launcher just updated itself to. Offering it again would
-/// loop: update, restart, "update available", … That happens if a release's binary reports a
+/// loop: update, restart, "update available", â€¦ That happens if a release's binary reports a
 /// different version from its tag, or while a pretend version is set.
 pub fn just_updated_to(paths: &Paths, release: &Release) -> bool {
     let Ok(text) = std::fs::read_to_string(marker(paths)) else { return false };
@@ -107,19 +107,19 @@ fn detect(exe: &Path) -> Option<Install> {
         return Some(Install::Portable(exe.to_path_buf()));
     }
     // The MSI installs per user, into the folder chosen in its wizard (which it records in the
-    // registry) or by default %LOCALAPPDATA%\Programs\ArtCraft Launcher.
+    // registry) or by default %LOCALAPPDATA%\Programs\SuiteDock.
     let canonical = |p: PathBuf| p.canonicalize().unwrap_or(p);
     let recorded = msi_install_dir().map(canonical);
     let default = dirs::data_local_dir().map(|d| canonical(d.join("Programs").join(LAUNCHER.name)));
     [recorded, default].into_iter().flatten().any(|d| d == dir).then(|| Install::Msi(exe.to_path_buf()))
 }
 
-/// The folder the MSI installed into, as it records it (`packaging/windows/artcraft-launcher.wxs`).
+/// The folder the MSI installed into, as it records it (`packaging/windows/suitedock.wxs`).
 #[cfg(windows)]
 fn msi_install_dir() -> Option<PathBuf> {
     use winreg::RegKey;
     use winreg::enums::HKEY_CURRENT_USER;
-    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Learning Machines LLC\ArtCraft Launcher").ok()?;
+    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\ripDZL\SuiteDock").ok()?;
     let dir: String = key.get_value("InstallDir").ok()?;
     let dir = dir.trim();
     (!dir.is_empty()).then(|| PathBuf::from(dir))
@@ -163,7 +163,7 @@ pub fn update(
     phase: &mut dyn FnMut(JobPhase),
 ) -> Result<(), String> {
     let (asset, _) = pick_asset(release, &[LAUNCHER.id], platform, &[install.kind()])
-        .ok_or_else(|| format!("ArtCraft Launcher {} has no {} for {}", release.version_label(), install.kind().label(), platform.label()))?;
+        .ok_or_else(|| format!("SuiteDock {} has no {} for {}", release.version_label(), install.kind().label(), platform.label()))?;
     let asset = asset.clone();
     let mut job = Job { http, paths, stop, phase };
     let (file, _) = install::download(release, &asset, &mut job)?;
@@ -224,7 +224,7 @@ pub fn update(
         #[allow(unreachable_patterns)]
         _ => {
             let _ = (pid, &file);
-            Err("this copy of ArtCraft Launcher can't update itself; download the new version instead".into())
+            Err("this copy of SuiteDock can't update itself; download the new version instead".into())
         }
     }
 }
@@ -328,51 +328,51 @@ mod tests {
         assert!(marker.exists(), "never started after the old launcher exited");
     }
 
-    /// A real disk image: the new `ArtCraft Launcher.app` replaces the old one in place.
+    /// A real disk image: the new `SuiteDock.app` replaces the old one in place.
     #[cfg(target_os = "macos")]
     #[test]
     fn the_new_bundle_replaces_the_running_one() {
         fn bundle(at: &Path, version: &str) {
-            let contents = at.join("ArtCraft Launcher.app/Contents");
+            let contents = at.join("SuiteDock.app/Contents");
             std::fs::create_dir_all(contents.join("MacOS")).unwrap();
             std::fs::write(
                 contents.join("Info.plist"),
                 format!(
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
-                     <key>CFBundleIdentifier</key><string>ai.storyteller.artcraft-launcher</string>\
+                     <key>CFBundleIdentifier</key><string>io.github.ripdzl.suitedock</string>\
                      <key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>"
                 ),
             )
             .unwrap();
-            std::fs::write(contents.join("MacOS/ArtCraft Launcher"), version).unwrap();
+            std::fs::write(contents.join("MacOS/SuiteDock"), version).unwrap();
         }
         let dir = tempfile::tempdir().unwrap();
         let apps = dir.path().join("Applications");
         bundle(&apps, "0.1.0");
         let src = dir.path().join("src");
         bundle(&src, "0.2.0");
-        let dmg = dir.path().join("artcraft-launcher-0.2.0-macos-universal.dmg");
+        let dmg = dir.path().join("suitedock-0.2.0-macos-universal.dmg");
         let ok = std::process::Command::new("hdiutil")
-            .args(["create", "-quiet", "-format", "UDZO", "-volname", "ArtCraft Launcher 0.2.0", "-srcfolder"])
+            .args(["create", "-quiet", "-format", "UDZO", "-volname", "SuiteDock 0.2.0", "-srcfolder"])
             .arg(&src)
             .arg(&dmg)
             .status()
             .unwrap()
             .success();
         assert!(ok, "hdiutil create failed");
-        let current = apps.join("ArtCraft Launcher.app");
+        let current = apps.join("SuiteDock.app");
         let existing = Installed { version: None, source: InstallSource::MacApp, location: current.display().to_string(), package: None };
         let placed = install::macos::install_dmg(&LAUNCHER, &dmg, Some(&existing), &Paths::under(dir.path())).unwrap();
         assert_eq!(placed, current);
-        assert_eq!(std::fs::read_to_string(current.join("Contents/MacOS/ArtCraft Launcher")).unwrap(), "0.2.0");
-        assert!(!dir.path().join("Applications/.ArtCraft Launcher.app.partial").exists());
+        assert_eq!(std::fs::read_to_string(current.join("Contents/MacOS/SuiteDock")).unwrap(), "0.2.0");
+        assert!(!dir.path().join("Applications/.SuiteDock.app.partial").exists());
     }
 
     #[test]
     fn powershell_quoting_survives_apostrophes() {
-        let p = Path::new(r"C:\Users\O'Brien\AppData\Local\ArtCraft Launcher\x.msi");
-        assert_eq!(ps_quote(p), r"'C:\Users\O''Brien\AppData\Local\ArtCraft Launcher\x.msi'");
-        assert_eq!(ps_quote_arg(p), r#"'"C:\Users\O''Brien\AppData\Local\ArtCraft Launcher\x.msi"'"#);
+        let p = Path::new(r"C:\Users\O'Brien\AppData\Local\SuiteDock\x.msi");
+        assert_eq!(ps_quote(p), r"'C:\Users\O''Brien\AppData\Local\SuiteDock\x.msi'");
+        assert_eq!(ps_quote_arg(p), r#"'"C:\Users\O''Brien\AppData\Local\SuiteDock\x.msi"'"#);
     }
 
     #[test]
@@ -384,21 +384,18 @@ mod tests {
     #[test]
     fn the_launcher_picks_its_own_release_files() {
         let names = [
-            "artcraft-launcher-0.2.0-macos-universal.dmg",
-            "artcraft-launcher-0.2.0-windows-x64.msi",
-            "artcraft-launcher-0.2.0-windows-x64-portable.zip",
-            "artcraft-launcher-0.2.0-linux-x86_64.AppImage",
-            "artcraft-launcher-0.2.0-linux-x86_64.deb",
-            "artcraft-launcher-web-0.2.0.zip",
+            "suitedock-0.2.0-macos-universal.dmg",
+            "suitedock-0.2.0-windows-x64.msi",
+            "suitedock-0.2.0-windows-x64-portable.zip",
+            "suitedock-0.2.0-linux-x86_64.AppImage",
+            "suitedock-0.2.0-linux-x86_64.deb",
+            "suitedock-web-0.2.0.zip",
         ];
         let release = Release {
-            assets: names
-                .iter()
-                .map(|n| artcraft_launcher_core::release::Asset { name: (*n).into(), size: 1, url: String::new(), sha256: None })
-                .collect(),
+            assets: names.iter().map(|n| suitedock_core::release::Asset { name: (*n).into(), size: 1, url: String::new(), sha256: None }).collect(),
             ..Release::default()
         };
-        use artcraft_launcher_core::{Arch, Os};
+        use suitedock_core::{Arch, Os};
         let pick = |os, kind| pick_asset(&release, &[LAUNCHER.id], Platform { os, arch: Arch::X64 }, &[kind]).map(|(a, _)| a.name.clone());
         assert_eq!(pick(Os::MacOs, Install::MacApp(PathBuf::new()).kind()).as_deref(), Some(names[0]));
         assert_eq!(pick(Os::Windows, Install::Msi(PathBuf::new()).kind()).as_deref(), Some(names[1]));

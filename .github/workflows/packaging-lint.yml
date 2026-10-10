@@ -51,29 +51,29 @@ jobs:
           ./packaging/windows/check-icons.ps1
       - name: XML, desktop entry, AppStream, Flatpak manifest
         run: |
-          xmllint --noout packaging/windows/artcraft-launcher.wxs packaging/windows/artcraft-launcher.en-us.wxl packaging/macos/*.plist* packaging/linux/*.xml*
+          xmllint --noout packaging/windows/suitedock.wxs packaging/windows/suitedock.en-us.wxl packaging/macos/*.plist* packaging/linux/*.xml*
           if grep -q "<key>LSUIElement</key>" packaging/macos/Info.plist.in; then echo "::error::Info.plist.in must not set LSUIElement"; exit 1; fi
-          desktop-file-validate packaging/linux/ai.storyteller.artcraft-launcher.desktop
-          sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/ai.storyteller.artcraft-launcher.metainfo.xml.in >"$RUNNER_TEMP/ai.storyteller.artcraft-launcher.metainfo.xml"
-          appstreamcli validate --no-net --explain "$RUNNER_TEMP/ai.storyteller.artcraft-launcher.metainfo.xml"
+          desktop-file-validate packaging/linux/io.github.ripdzl.suitedock.desktop
+          sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/io.github.ripdzl.suitedock.metainfo.xml.in >"$RUNNER_TEMP/io.github.ripdzl.suitedock.metainfo.xml"
+          appstreamcli validate --no-net --explain "$RUNNER_TEMP/io.github.ripdzl.suitedock.metainfo.xml"
           python3 - <<'PY'
           import yaml
-          src = yaml.safe_load(open("packaging/linux/flatpak/ai.storyteller.artcraft-launcher.yml"))
-          bundle = yaml.safe_load(open("packaging/linux/flatpak/ai.storyteller.artcraft-launcher.bundle.yml"))
+          src = yaml.safe_load(open("packaging/linux/flatpak/io.github.ripdzl.suitedock.yml"))
+          bundle = yaml.safe_load(open("packaging/linux/flatpak/io.github.ripdzl.suitedock.bundle.yml"))
           for m in (src, bundle):
-              assert m["id"] == "ai.storyteller.artcraft-launcher" and m["command"] == "artcraft-launcher", m["id"]
+              assert m["id"] == "io.github.ripdzl.suitedock" and m["command"] == "suitedock", m["id"]
           for key in ("runtime", "runtime-version", "sdk", "finish-args"):
               assert src[key] == bundle[key], f"Flatpak manifests disagree on {key}: {src[key]} vs {bundle[key]}"
           print("Flatpak manifests ok")
           PY
       - name: Icons the app embeds exist
         run: |
-          for f in assets/app-icon/artcraft-launcher.ico assets/app-icon/artcraft-launcher.icns \
-            assets/app-icon/artcraft-launcher-1024.png docs/brand/artcraft-mark-black-44.png \
-            docs/brand/artcraft-mark-64.png docs/brand/artcraft-logo.svg docs/brand/artcraft-logo-white.svg \
-            assets/app-icon/hicolor/scalable/apps/ai.storyteller.artcraft-launcher.svg; do
+          for f in assets/app-icon/suitedock.ico assets/app-icon/suitedock.icns \
+            assets/app-icon/suitedock-1024.png docs/brand/suitedock-mark-black-44.png \
+            docs/brand/suitedock-mark-64.png docs/brand/suitedock-logo.svg docs/brand/suitedock-logo-white.svg \
+            assets/app-icon/hicolor/scalable/apps/io.github.ripdzl.suitedock.svg; do
             test -s "$f" || { echo "::error::missing $f"; exit 1; }
           done
           for s in 16 24 32 48 64 128 256 512; do
-            test -s "assets/app-icon/hicolor/${s}x${s}/apps/ai.storyteller.artcraft-launcher.png" || { echo "::error::missing ${s}px icon"; exit 1; }
+            test -s "assets/app-icon/hicolor/${s}x${s}/apps/io.github.ripdzl.suitedock.png" || { echo "::error::missing ${s}px icon"; exit 1; }
           done

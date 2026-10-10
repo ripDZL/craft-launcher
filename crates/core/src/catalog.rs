@@ -54,7 +54,7 @@ impl CraftApp {
 
     /// `ai.storyteller.<id>`: macOS bundle id, Flatpak id and Linux desktop-file id.
     pub fn bundle_id(&self) -> String {
-        format!("ai.storyteller.{}", self.id)
+        if self.id == LAUNCHER_ID { "io.github.ripdzl.suitedock".into() } else { format!("ai.storyteller.{}", self.id) }
     }
 
     pub fn releases_url(&self) -> String {
@@ -231,27 +231,39 @@ pub const SOCIAL: [(&str, &str); 5] = [
 /// The ArtCraft community on Discord.
 pub const DISCORD_URL: &str = "https://discord.gg/artcraft";
 
-/// ArtCraft Launcher itself, described like a Craft App so it can update itself with the same
-/// machinery (asset names `artcraft-launcher-<ver>-…`, bundle id `ai.storyteller.artcraft-launcher`,
-/// `ArtCraft Launcher.app`). Not part of [`SUITE`].
+/// SuiteDock itself, described like a Craft App so it can update itself with the same
+/// machinery (asset names `suitedock-<ver>-…`, bundle id `io.github.ripdzl.suitedock`,
+/// `SuiteDock.app`). Not part of [`SUITE`].
 pub const LAUNCHER: CraftApp = app(
-    "artcraft-launcher",
-    "ArtCraft Launcher",
+    "suitedock",
+    "SuiteDock",
     "Installs and updates the Craft App Suite",
     "",
     AppGroup::New,
     [[0x0b, 0x0b, 0x0c], [0x0b, 0x0b, 0x0c], [0xf2, 0xf1, 0xee]],
-    "storytold/craft-launcher",
+    "ripDZL/craft-launcher",
 );
 
 /// The launcher's own repo, checked so it can say when a newer launcher is out.
-pub const LAUNCHER_REPO: &str = "storytold/craft-launcher";
+pub const LAUNCHER_REPO: &str = "ripDZL/craft-launcher";
 /// The launcher's own asset stem.
-pub const LAUNCHER_ID: &str = "artcraft-launcher";
+pub const LAUNCHER_ID: &str = "suitedock";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_identity_does_not_change_managed_apps() {
+        assert_eq!(LAUNCHER.name, "SuiteDock");
+        assert_eq!(LAUNCHER.repo, LAUNCHER_REPO);
+        assert_eq!(LAUNCHER_REPO, "ripDZL/craft-launcher");
+        assert_eq!(LAUNCHER.bundle_id(), "io.github.ripdzl.suitedock");
+        for app in &SUITE {
+            assert_eq!(app.bundle_id(), format!("ai.storyteller.{}", app.id));
+            assert_eq!(app.repo, format!("storytold/{}", app.id));
+        }
+    }
 
     #[test]
     fn suite_has_seven_classic_and_five_new_apps_with_unique_ids() {

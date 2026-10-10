@@ -6,7 +6,7 @@
 //! - Linux: AppImages in `~/Applications`, Debian/RPM packages, Flatpaks, and tarball installs.
 //! - FreeBSD: tarball installs and `/usr/local/bin/<app>`.
 
-use artcraft_launcher_core::{CraftApp, InstallSource, Installed, version};
+use suitedock_core::{CraftApp, InstallSource, Installed, version};
 
 use crate::manifest::Manifest;
 
@@ -117,7 +117,7 @@ pub mod windows {
     /// An MSI install found in the registry.
     pub struct MsiInstall {
         pub product_code: String,
-        pub version: Option<artcraft_launcher_core::version::Version>,
+        pub version: Option<suitedock_core::version::Version>,
         pub exe: Option<PathBuf>,
     }
 
@@ -187,7 +187,7 @@ pub mod linux {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use artcraft_launcher_core::platform::parse_asset_name;
+    use suitedock_core::platform::parse_asset_name;
 
     use super::*;
     use crate::packages::{self, Package};
@@ -197,7 +197,7 @@ pub mod linux {
     /// pacman, Flatpak). Read once per detection pass.
     pub fn packages() -> Vec<Package> {
         let ours = |name: &str| {
-            artcraft_launcher_core::SUITE.iter().any(|a| {
+            suitedock_core::SUITE.iter().any(|a| {
                 [InstallSource::Deb, InstallSource::Pacman, InstallSource::Flatpak]
                     .iter()
                     .any(|m| crate::packages::candidate_names(a, *m).iter().any(|n| n == name))
@@ -254,7 +254,7 @@ pub mod linux {
             .filter_map(|e| {
                 let name = e.file_name().into_string().ok()?;
                 let parsed = parse_asset_name(&name, &stems)?;
-                (parsed.kind == artcraft_launcher_core::PackageKind::AppImage).then(|| (e.path(), version::parse(&parsed.version)))
+                (parsed.kind == suitedock_core::PackageKind::AppImage).then(|| (e.path(), version::parse(&parsed.version)))
             })
             .collect();
         out.sort_by(|a, b| match (&b.1, &a.1) {

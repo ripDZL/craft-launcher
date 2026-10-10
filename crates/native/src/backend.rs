@@ -5,14 +5,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use artcraft_launcher_core::catalog::{LAUNCHER, LAUNCHER_ID};
-use artcraft_launcher_core::feed::{Feed, FeedAnswer};
-use artcraft_launcher_core::platform::{Arch, Os, Platform, pick_asset};
-use artcraft_launcher_core::protocol::{
+use suitedock_core::catalog::{LAUNCHER, LAUNCHER_ID};
+use suitedock_core::feed::{Feed, FeedAnswer};
+use suitedock_core::platform::{Arch, Os, Platform, pick_asset};
+use suitedock_core::protocol::{
     Backend, BackendOptions, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload, Source,
 };
-use artcraft_launcher_core::release::{Asset, Release};
-use artcraft_launcher_core::{CraftApp, Installed, PackageKind, SUITE, version};
+use suitedock_core::release::{Asset, Release};
+use suitedock_core::{CraftApp, Installed, PackageKind, SUITE, version};
 
 use crate::feed_throttle::{self, FeedThrottle, Outcome};
 use crate::http::{self, Http, Stop};
@@ -57,7 +57,7 @@ struct Shared {
     /// A detection pass is running; another request waits for the next one.
     detecting: AtomicBool,
     last_check: Mutex<Option<i64>>,
-    /// The newer ArtCraft Launcher release, once a check has found one.
+    /// The newer SuiteDock release, once a check has found one.
     launcher_release: Mutex<Option<Release>>,
     /// When GitHub was last asked about each app (Unix seconds), to keep the fallback rare.
     github_asked: Mutex<HashMap<String, i64>>,
@@ -96,7 +96,7 @@ impl NativeBackend {
         let waker: Waker = Arc::new(waker);
         let paths = Paths::new().unwrap_or_else(|e| {
             log::error!("{e}; keeping files in the temporary folder");
-            Paths::under(&std::env::temp_dir().join("artcraft-launcher"))
+            Paths::under(&std::env::temp_dir().join("suitedock"))
         });
         let http = match Http::new() {
             Ok(h) => Some(h),
@@ -238,7 +238,7 @@ impl NativeBackend {
                                 sources.lock().unwrap_or_else(PoisonError::into_inner).push(used);
                             }
                             if app.id == LAUNCHER_ID {
-                                // Is there a newer ArtCraft Launcher?
+                                // Is there a newer SuiteDock?
                                 if let Some(LatestRelease::Found(r)) = latest
                                     && let (Some(newest), Some(current)) = (r.version.as_ref(), crate::self_update::current_version())
                                     && version::is_newer(newest, &current)
@@ -348,7 +348,7 @@ impl NativeBackend {
         let (Some(install), Some(platform)) = (self.self_install.clone(), self.platform) else {
             self.shared.emit(Event::JobFinished {
                 app: id,
-                result: Err("this copy of ArtCraft Launcher can't update itself; download the new version instead".into()),
+                result: Err("this copy of SuiteDock can't update itself; download the new version instead".into()),
             });
             return;
         };
@@ -548,7 +548,7 @@ fn latest_for(
     force: bool,
     now: i64,
 ) -> (Option<LatestRelease>, Origin, Option<Source>) {
-    if fallback.trust_feed {
+    if app.id != LAUNCHER_ID && fallback.trust_feed {
         match feed.map(|f| f.answer(app, now)) {
             Some(FeedAnswer::Fresh(Some(r))) => return (Some(LatestRelease::Found(r)), Origin::ArtCraftApi, Some(Source::Feed)),
             Some(FeedAnswer::Fresh(None)) => return (Some(LatestRelease::None), Origin::ArtCraftApi, Some(Source::Feed)),
@@ -574,7 +574,7 @@ fn latest_for(
 
 /// The repo to ask GitHub about, following the feed's repo renames.
 fn feed_repo(feed: Option<&Feed>, app: &CraftApp) -> String {
-    feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app))
+    if app.id == LAUNCHER_ID { app.repo.to_string() } else { feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app)) }
 }
 
 /// What came of asking the feed during one check.
@@ -641,13 +641,13 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
     if asked { FeedFetch::Failed } else { FeedFetch::Held }
 }
 
-/// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at a staging server or a local copy
+/// The feed's address. `SUITEDOCK_FEED_URL` points at a staging server or a local copy
 /// (only `https://`, or plain `http://` on localhost).
 fn feed_url() -> String {
-    std::env::var("ARTCRAFT_LAUNCHER_FEED_URL")
+    std::env::var("SUITEDOCK_FEED_URL")
         .ok()
         .filter(|u| u.starts_with("https://") || u.starts_with("http://127.0.0.1:") || u.starts_with("http://localhost:"))
-        .unwrap_or_else(|| artcraft_launcher_core::feed::FEED_URL.to_string())
+        .unwrap_or_else(|| suitedock_core::feed::FEED_URL.to_string())
 }
 
 /// The last saved feed answer, if any.
@@ -755,8 +755,8 @@ impl Backend for NativeBackend {
 
 /// The launcher's own download for this machine, for "a new launcher is available".
 pub fn launcher_download(release: &Release, platform: Platform) -> Option<String> {
-    let kinds: &[artcraft_launcher_core::PackageKind] = match platform.os {
-        Os::Linux => &[artcraft_launcher_core::PackageKind::AppImage, artcraft_launcher_core::PackageKind::Deb],
+    let kinds: &[suitedock_core::PackageKind] = match platform.os {
+        Os::Linux => &[suitedock_core::PackageKind::AppImage, suitedock_core::PackageKind::Deb],
         _ => platform.default_kinds(),
     };
     pick_asset(release, &[LAUNCHER_ID], platform, kinds).map(|(a, _)| a.url.clone())
@@ -766,7 +766,7 @@ pub fn launcher_download(release: &Release, platform: Platform) -> Option<String
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use artcraft_launcher_core::protocol::LatestRelease;
+    use suitedock_core::protocol::LatestRelease;
 
     use super::*;
     use crate::source::Answer;
@@ -809,6 +809,25 @@ mod tests {
             feed_ok_at: Mutex::new(None),
             feed_throttle: Mutex::new(FeedThrottle::new()),
         }
+    }
+
+    #[test]
+    fn launcher_updates_ignore_upstream_feed_and_repository_renames() {
+        let feed = Feed::parse(
+            r#"{"release_info":{"apps":{"suitedock":{"latest_release":null,"app_last_fetched":"2099-01-01T00:00:00Z"}}},
+                "repo_renames":[{"old_repo":"ripDZL/craft-launcher","new_repo":"storytold/craft-launcher"}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(feed.answer(&LAUNCHER, crate::now()), FeedAnswer::Fresh(None)));
+        assert_eq!(feed_repo(Some(&feed), &LAUNCHER), "ripDZL/craft-launcher");
+        let github = CountingGitHub::default();
+        let state = shared();
+        let (latest, origin, used) =
+            latest_for(&LAUNCHER, Some(&feed), Fallback { trust_feed: true, github_every: 3600 }, &github, &state, false, true, crate::now());
+        assert!(matches!(latest, Some(LatestRelease::None)));
+        assert_eq!(origin, Origin::GitHub);
+        assert_eq!(used, Some(Source::GitHubApi));
+        assert_eq!(github.0.load(Ordering::SeqCst), 1);
     }
 
     /// A local server answering every request with `status` (and `Retry-After: 120` on a 429),

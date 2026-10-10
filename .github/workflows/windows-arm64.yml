@@ -52,7 +52,7 @@ jobs:
         run: ./packaging/windows/package.ps1 -Arch arm64
       - uses: actions/upload-artifact@v4
         with:
-          name: artcraft-launcher-windows-arm64
+          name: suitedock-windows-arm64
           path: dist/arm64/*
           if-no-files-found: error
           retention-days: 7
@@ -65,16 +65,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: artcraft-launcher-windows-arm64
+          name: suitedock-windows-arm64
           path: dist
       - name: Install the MSI, check it, uninstall it
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
-          $startLnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'ArtCraft Launcher.lnk'
-          $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'ArtCraft Launcher.lnk'
-          $key = 'HKCU:\Software\Learning Machines LLC\ArtCraft Launcher'
+          $startLnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'SuiteDock.lnk'
+          $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SuiteDock.lnk'
+          $key = 'HKCU:\Software\Learning Machines LLC\SuiteDock'
           function Install([string[]] $props) {
             $p = Start-Process msiexec.exe -ArgumentList (@('/i', "`"$msi`"", '/qn', '/l*v', 'install.log') + $props) -Wait -PassThru
             if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
@@ -89,9 +89,9 @@ jobs:
           function Expect([bool] $ok, [string] $what) { if (-not $ok) { Get-Content install.log -Tail 60; throw $what }; Write-Output "ok $what" }
 
           # 1. A first install with the defaults, as the wizard's Next, Next, Install does:
-          #    %LOCALAPPDATA%\Programs\ArtCraft Launcher, with the Start Menu and desktop shortcuts.
+          #    %LOCALAPPDATA%\Programs\SuiteDock, with the Start Menu and desktop shortcuts.
           Install @()
-          $exe = Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft Launcher\artcraft-launcher.exe'
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\SuiteDock\suitedock.exe'
           Expect (Test-Path $exe) "installed in the default folder: $exe"
           $bytes = [System.IO.File]::ReadAllBytes($exe)
           $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 4)
@@ -102,9 +102,9 @@ jobs:
           Uninstall $exe
 
           # 2. A folder of the user's choosing, without the desktop shortcut.
-          $dir = Join-Path $env:LOCALAPPDATA 'ArtCraft Launcher Test Folder'
+          $dir = Join-Path $env:LOCALAPPDATA 'SuiteDock Test Folder'
           Install @("INSTALLFOLDER=`"$dir\`"", 'INSTALLDESKTOPSHORTCUT=0')
-          $exe = Join-Path $dir 'artcraft-launcher.exe'
+          $exe = Join-Path $dir 'suitedock.exe'
           Expect (Test-Path $exe) "installed in the chosen folder: $exe"
           Expect ((Get-ItemProperty $key).InstallDir.TrimEnd('\') -eq $dir) 'the chosen folder is recorded for updates and self-update'
           Expect (Test-Path $startLnk) "Start Menu shortcut: $startLnk"

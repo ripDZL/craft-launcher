@@ -1,16 +1,16 @@
 # AGENTS.md: guide for AI agents and contributors
 
-ArtCraft Launcher installs, updates and launches the **Craft App Suite** (PhotoCraft, LightCraft,
+SuiteDock installs, updates and launches the **Craft App Suite** (PhotoCraft, LightCraft,
 FilmCraft, DesignCraft, VectorCraft, PdfCraft, EffectCraft, WordCraft, DeckCraft, GridCraft,
 CADCraft, SoundCraft). It is written in **Rust only** (no JavaScript or TypeScript): the desktop
 app is native egui/eframe, and the web build is the same Rust compiled to WebAssembly (trunk +
 wasm-bindgen). **No Tauri, Electron or webview shells**, ever.
 
-The product name is always **ArtCraft Launcher** in user-facing text: UI, window titles, About,
-tray menu, notifications, installers, release names, docs prose. The suite is the **Craft App
-Suite**. Machine names stay lowercase: crates and binaries (`artcraft-launcher`,
-`artcraft-launcher-*`), file names, and the app id `ai.storyteller.artcraft-launcher`. Note the
-GitHub repo is `storytold/craft-launcher`, while every file and package is `artcraft-launcher-*`.
+The product name is always **SuiteDock** in user-facing text: UI, window titles, About,
+tray menu, notifications, installers, release names, docs prose. This is an independent fork, not an official ArtCraft product. The suite is the **Craft App
+Suite**. Machine names stay lowercase: crates and binaries (`suitedock`,
+`suitedock-*`), file names, and the app id `io.github.ripdzl.suitedock`. Note the
+GitHub repo is `ripDZL/craft-launcher`, while every file and package is `suitedock-*`.
 
 Standards and learnings shared across the Craft apps live in `../craftrules` (read its
 `README.md` and `AGENTS.md`). Contribute reusable learnings there, never code.
@@ -19,18 +19,18 @@ Standards and learnings shared across the Craft apps live in `../craftrules` (re
 
 ```text
 crates/
-  core      artcraft-launcher-core      pure and wasm-safe: the app catalog, versions, GitHub
+  core      suitedock-core      pure and wasm-safe: the app catalog, versions, GitHub
                                         release parsing, picking the right asset per platform
-  native    artcraft-launcher-native    desktop only: HTTP, detecting installed apps, download,
+  native    suitedock-native    desktop only: HTTP, detecting installed apps, download,
                                         verify and install
-  ui-egui   artcraft-launcher-ui-egui   the shared egui UI (desktop and web)
+  ui-egui   suitedock-ui-egui   the shared egui UI (desktop and web)
 apps/
-  artcraft-launcher                     desktop shell (eframe): window, tray icon, notifications
-  artcraft-launcher-web                 the same UI in the browser (trunk; catalog and downloads only)
+  suitedock                     desktop shell (eframe): window, tray icon, notifications
+  suitedock-web                 the same UI in the browser (trunk; catalog and downloads only)
 xtask/                                  cargo xtask ci | wasm | version | ico
 packaging/                              macOS, Windows, Linux, FreeBSD and web packaging scripts
 assets/app-icon/                        the launcher's own icon (master SVG, renders, tray icons)
-assets/app-icons/                       the Craft apps' icons, copied from each app's repo
+assets/app-icons/                       original category icons for the managed Craft apps
 assets/fonts/                           Archivo, Inter, Geist Mono (OFL-1.1): getartcraft.com's faces
 ```
 
@@ -71,19 +71,15 @@ colour tokens by name (`theme::Tokens`). Build new UI from `widgets.rs`; never h
 
 ### Other rules
 
-1. **Assets need attribution.** Every bundled asset gets a row in `ATTRIBUTION.md` (path, title,
-   author, source, license) in the same change. The ArtCraft name, logo and "A" mark in
-   `docs/brand/` (the header logo and the tray icon) are trademarks, **not MIT/Apache**
-   (`docs/brand/LICENSE-brand.txt`): use them exactly as supplied, never redraw or recolor them.
-2. **Icons are generated.** The app icon and the tray icon are the supplied ArtCraft "A" mark from
-   `docs/brand/` (a trademark, not MIT/Apache); never edit the renders by hand. Run `packaging/icons.sh` (needs `resvg`; runs on any OS) and commit the outputs.
-   `assets/app-icons/` is copied verbatim from each app's repo (`assets/app-icon/hicolor/128x128/apps/ai.storyteller.<app>.png`);
-   refresh it from there, never redraw.
+1. **Assets need attribution.** Keep ATTRIBUTION.md current. SuiteDock graphics are original
+   MIT OR Apache-2.0 assets; do not reintroduce upstream marks, mascots or service logos.
+2. **Icons are generated.** Edit original SVGs, then regenerate via packaging/icons.sh or
+   packaging/render-icons.ps1. Managed apps retain their upstream package identities.
 3. **Never break wasm.** `cargo xtask wasm` must pass. File-system, process and OS code is
    `cfg(not(target_arch = "wasm32"))`.
 4. **Tests are the gate.** Release parsing and asset picking in `core` get unit tests with real
    GitHub release JSON fixtures (small, committed under `crates/core/tests/fixtures/`).
-5. When fetching anything, use a generic `ArtCraft-Launcher/<version>` User-Agent and never put
+5. When fetching anything, use a generic `SuiteDock/<version>` User-Agent and never put
    a person's name, email or other personal details in requests.
 
 ## 3. Before you finish a task
@@ -101,38 +97,38 @@ packaging/linux/AppRun` and `actionlint`.
 The version lives only in `[workspace.package] version` in the root `Cargo.toml`
 (`cargo xtask version`, `cargo xtask version set X.Y.Z[-pre]`). Pushing to the `release` branch runs
 `.github/workflows/release.yml`, which builds every platform and creates the draft GitHub Release
-**ArtCraft Launcher v<version>** with `SHA256SUMS.txt`. The canonical recipe is
+**SuiteDock v<version>** with `SHA256SUMS.txt`. The canonical recipe is
 `../craftrules/release/playbook.md`; cutting a release is `../craftrules/release/cut-a-release.md`.
 
 Release assets (keep these names exact; the launcher's own self-update and the README rely on them):
 
 | Platform | Files |
 |---|---|
-| Windows | `artcraft-launcher-<ver>-windows-{x64,x86,arm64}.msi`, `…-windows-{x64,x86,arm64}-portable.zip` |
-| macOS | `artcraft-launcher-<ver>-macos-universal.dmg` |
-| Linux | `artcraft-launcher-<ver>-linux-{x86_64,aarch64}.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}` |
-| FreeBSD | `artcraft-launcher-<ver>-freebsd-x86_64.tar.gz` |
-| Web | `artcraft-launcher-web-<ver>.zip` |
+| Windows | `suitedock-<ver>-windows-{x64,x86,arm64}.msi`, `…-windows-{x64,x86,arm64}-portable.zip` |
+| macOS | `suitedock-<ver>-macos-universal.dmg` |
+| Linux | `suitedock-<ver>-linux-{x86_64,aarch64}.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}` |
+| FreeBSD | `suitedock-<ver>-freebsd-x86_64.tar.gz` |
+| Web | `suitedock-web-<ver>.zip` |
 
 Packaging facts the code relies on:
 
 - The Windows MSI is **per-user** (no UAC prompt), by default into
-  `%LOCALAPPDATA%\Programs\ArtCraft Launcher`. Double-clicked it opens a WixUI setup wizard
+  `%LOCALAPPDATA%\Programs\SuiteDock`. Double-clicked it opens a WixUI setup wizard
   (Welcome; a folder page with a "Create a desktop shortcut" box; Ready; progress; Finish with
   "Launch"), whose art `package.ps1` draws at build time; self-update runs it with `/passive`, no
   wizard. The folder and the shortcut choice are recorded under
-  `HKCU\Software\Learning Machines LLC\ArtCraft Launcher` (`InstallDir`,
+  `HKCU\Software\ripDZL\SuiteDock` (`InstallDir`,
   `DesktopShortcutChoice`) and reused by the next version, and `self_update.rs` reads `InstallDir`
   to know the running copy came from the MSI. Its shortcuts set AppUserModelID
-  `ai.storyteller.artcraft-launcher`, which toast notifications need. `portable.txt` beside the exe switches on portable mode
-  (`ArtCraftLauncherData\` next to the exe).
-- The macOS bundle is `ArtCraft Launcher.app` (executable `Contents/MacOS/ArtCraft Launcher`), a
+  `io.github.ripdzl.suitedock`, which toast notifications need. `portable.txt` beside the exe switches on portable mode
+  (`SuiteDockData\` next to the exe).
+- The macOS bundle is `SuiteDock.app` (executable `Contents/MacOS/SuiteDock`), a
   normal Dock app that can also sit in the menu bar: `LSUIElement` must never be set.
 - Linux: the tray uses StatusNotifierItem over D-Bus and notifications use
   `org.freedesktop.Notifications`, both in pure Rust (no GTK, appindicator or libdbus).
-- `build.rs` reads `ARTCRAFT_LAUNCHER_BUILD_SHA` / `ARTCRAFT_LAUNCHER_BUILD_DATE` and, on Windows,
-  embeds `assets/app-icon/artcraft-launcher.ico`, failing the build when
-  `ARTCRAFT_LAUNCHER_REQUIRE_WINRES=1` and it can't.
+- `build.rs` reads `SUITEDOCK_BUILD_SHA` / `SUITEDOCK_BUILD_DATE` and, on Windows,
+  embeds `assets/app-icon/suitedock.ico`, failing the build when
+  `SUITEDOCK_REQUIRE_WINRES=1` and it can't.
 
 ## 5. Parallel agents
 

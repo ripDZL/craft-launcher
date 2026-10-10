@@ -2,6 +2,7 @@
 plan/
 plans/
 /target
+/build-logs/
 target/
 /builds
 builds/

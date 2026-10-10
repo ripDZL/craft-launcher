@@ -9,9 +9,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
-use artcraft_launcher_core::protocol::{LatestRelease, Source};
-use artcraft_launcher_core::release::{self, Release};
 use serde::{Deserialize, Serialize};
+use suitedock_core::protocol::{LatestRelease, Source};
+use suitedock_core::release::{self, Release};
 
 use crate::http::{Fetched, Http};
 

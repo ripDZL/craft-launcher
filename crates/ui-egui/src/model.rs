@@ -1,10 +1,10 @@
 //! What the UI knows about each app.
 
-use artcraft_launcher_core::platform::{Platform, pick_asset};
-use artcraft_launcher_core::protocol::{JobPhase, LatestRelease, PausedDownload};
-use artcraft_launcher_core::release::Release;
-use artcraft_launcher_core::status::{self, AppStatus, Latest};
-use artcraft_launcher_core::{CraftApp, Installed};
+use suitedock_core::platform::{Platform, pick_asset};
+use suitedock_core::protocol::{JobPhase, LatestRelease, PausedDownload};
+use suitedock_core::release::Release;
+use suitedock_core::status::{self, AppStatus, Latest};
+use suitedock_core::{CraftApp, Installed};
 
 #[derive(Clone, Debug)]
 pub struct AppEntry {
@@ -15,7 +15,7 @@ pub struct AppEntry {
     pub detected: bool,
     pub job: Option<JobPhase>,
     /// The service `latest` came from.
-    pub origin: Option<artcraft_launcher_core::protocol::Origin>,
+    pub origin: Option<suitedock_core::protocol::Origin>,
     /// A download waiting to be resumed.
     pub paused: Option<PausedDownload>,
 }

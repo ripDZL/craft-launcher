@@ -1,8 +1,8 @@
 //! Modal dialogs: release notes, uninstall confirmation, settings.
 
-use artcraft_launcher_core::protocol::Command;
-use artcraft_launcher_core::{Os, PackageKind, time};
 use egui::{RichText, vec2};
+use suitedock_core::protocol::Command;
+use suitedock_core::{Os, PackageKind, time};
 
 use crate::app::{Dialog, Host, LauncherUi};
 use crate::settings::CheckEvery;
@@ -107,15 +107,11 @@ impl LauncherUi {
         ui.set_width(420.0);
         Self::title(ui, crate::icons::app(id), &format!("Uninstall {}?", entry.app.name), "");
         let how = match entry.installed.as_ref().map(|i| i.source) {
-            Some(artcraft_launcher_core::InstallSource::MacApp) => "The app will be moved to the Trash. Your documents and settings stay.",
-            Some(artcraft_launcher_core::InstallSource::Msi) => {
-                "Windows will remove it like any installed program. Your documents and settings stay."
+            Some(suitedock_core::InstallSource::MacApp) => "The app will be moved to the Trash. Your documents and settings stay.",
+            Some(suitedock_core::InstallSource::Msi) => "Windows will remove it like any installed program. Your documents and settings stay.",
+            Some(suitedock_core::InstallSource::Deb | suitedock_core::InstallSource::Rpm | suitedock_core::InstallSource::Pacman) => {
+                "Your system's package manager will remove it, and may ask for your password. Your documents and settings stay."
             }
-            Some(
-                artcraft_launcher_core::InstallSource::Deb
-                | artcraft_launcher_core::InstallSource::Rpm
-                | artcraft_launcher_core::InstallSource::Pacman,
-            ) => "Your system's package manager will remove it, and may ask for your password. Your documents and settings stay.",
             _ => "The app will be removed. Your documents and settings stay.",
         };
         ui.label(RichText::new(how).color(t.muted));
@@ -137,7 +133,7 @@ impl LauncherUi {
         let t = Tokens::get(ui.ctx());
         // Wide enough for the community buttons and every social icon on one row.
         ui.set_width(520.0);
-        Self::title(ui, Some(crate::icons::artcraft_mark()), "Settings", &format!("ArtCraft Launcher {}", env!("CARGO_PKG_VERSION")));
+        Self::title(ui, Some(crate::icons::suitedock_mark()), "Settings", &format!("SuiteDock {}", env!("CARGO_PKG_VERSION")));
         let section = |ui: &mut egui::Ui, s: &str| {
             ui.add_space(14.0);
             widgets::hud(ui, s, t.faint);
@@ -189,7 +185,7 @@ impl LauncherUi {
                     .on_hover_text("When on, opening the launcher from the menu bar brings its window to the desktop you're on. When off, macOS switches you to the desktop the window was on.");
             }
             if let Some(mut on) = host.login_item()
-                && ui.checkbox(&mut on, "Start ArtCraft Launcher when I log in").changed()
+                && ui.checkbox(&mut on, "Start SuiteDock when I log in").changed()
                 && let Err(e) = host.set_login_item(on)
             {
                 let ctx = ui.ctx().clone();
@@ -197,11 +193,17 @@ impl LauncherUi {
             }
         }
 
-        section(ui, "Community");
+        section(ui, "About SuiteDock");
+        ui.label(RichText::new("Independent fork based on ArtCraft Launcher by the ArtCraft team.").color(t.muted));
+        if widgets::button(ui, "SuiteDock source", Kind::Secondary, 0.0).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab("https://github.com/ripDZL/craft-launcher"));
+        }
+
+        section(ui, "Craft App Suite community");
         ui.label(RichText::new("Questions, ideas and news from the ArtCraft team").color(t.muted));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            use artcraft_launcher_core::catalog::{DISCORD_URL, GITHUB_URL, WEBSITE_URL};
+            use suitedock_core::catalog::{DISCORD_URL, GITHUB_URL, WEBSITE_URL};
             if widgets::button(ui, "Join the Discord", Kind::Primary, 0.0).on_hover_text(DISCORD_URL).clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(DISCORD_URL));
             }
@@ -218,6 +220,10 @@ impl LauncherUi {
         });
 
         section(ui, "Appearance");
+        ui.checkbox(&mut self.settings.show_social_links, "Show community and social links outside Settings").on_hover_text(
+            "Shows Discord, GitHub, Website and social icons in the main window. Community links inside Settings are always available.",
+        );
+        ui.add_space(8.0);
         let mut theme_choice = self.settings.theme;
         ui.horizontal(|ui| {
             widgets::cells(ui, &mut theme_choice, &ThemeChoice::ALL.map(|c| (c, Cell { label: c.label(), tip: c.label(), count: None })));
@@ -227,7 +233,7 @@ impl LauncherUi {
         ui.add_space(24.0);
         let mut close = false;
         ui.horizontal(|ui| {
-            if self.caps.manage_apps && widgets::button(ui, "Quit ArtCraft Launcher", Kind::Secondary, 0.0).clicked() {
+            if self.caps.manage_apps && widgets::button(ui, "Quit SuiteDock", Kind::Secondary, 0.0).clicked() {
                 host.quit();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

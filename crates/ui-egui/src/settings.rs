@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use artcraft_launcher_core::PackageKind;
 use serde::{Deserialize, Serialize};
+use suitedock_core::PackageKind;
 
 use crate::theme::ThemeChoice;
 
@@ -96,6 +96,9 @@ pub struct Settings {
     /// Show a system notification when an installed app has an update.
     pub notify: bool,
     pub prereleases: bool,
+    /// Whether to show general community links in the main header and footer.
+    /// Links in Settings and app-specific links always remain accessible.
+    pub show_social_links: bool,
     /// Linux: the package format to prefer for new installs (empty: the system's own).
     pub preferred_kinds: Vec<PackageKind>,
     /// Announcements and alerts from the release feed the user dismissed (by notice id).
@@ -119,6 +122,7 @@ impl Default for Settings {
             check_every: CheckEvery::Hour,
             notify: true,
             prereleases: false,
+            show_social_links: false,
             preferred_kinds: Vec::new(),
             dismissed_notices: std::collections::BTreeSet::new(),
             notified: BTreeMap::new(),

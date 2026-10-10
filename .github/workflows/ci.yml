@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
   pull_request:
   workflow_dispatch:
 
@@ -54,6 +54,45 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Windows shortcut and renderer checks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./packaging/render-icons.ps1
+          ./packaging/windows/check-icons.ps1
+
+      - name: Build Windows portable launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+          SUITEDOCK_REQUIRE_WINRES: '1'
+          SUITEDOCK_BUILD_SHA: ${{ github.sha }}
+        run: |
+          cargo build --release --locked -p suitedock --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
+          $version = cargo xtask version
+          if ($LASTEXITCODE -ne 0) { throw 'Version lookup failed' }
+          $stage = Join-Path $env:RUNNER_TEMP 'suitedock-portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/suitedock.exe $stage
+          Copy-Item packaging/windows/portable.txt $stage
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, NOTICE, ATTRIBUTION.md $stage
+          New-Item -ItemType Directory -Force -Path "$stage/font-licenses" | Out-Null
+          Copy-Item assets/fonts/OFL-*.txt "$stage/font-licenses"
+          New-Item -ItemType Directory -Force -Path dist/ci | Out-Null
+          $zip = "dist/ci/suitedock-$version-windows-x64-portable.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath dist/ci/SHA256SUMS.txt -Encoding utf8NoBOM
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: suitedock-windows-x64-portable
+          path: dist/ci/*
+          if-no-files-found: error
+
   wasm:
     name: wasm32 check + trunk build
     runs-on: ubuntu-latest
@@ -71,7 +110,7 @@ jobs:
       - name: Check wasm-safe crates
         run: cargo xtask wasm
       - name: Clippy (wasm32)
-        run: cargo clippy -p artcraft-launcher-core -p artcraft-launcher-web --target wasm32-unknown-unknown --locked -- -D warnings
+        run: cargo clippy -p suitedock-core -p suitedock-web --target wasm32-unknown-unknown --locked -- -D warnings
       - name: Install trunk
         run: |
           curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \

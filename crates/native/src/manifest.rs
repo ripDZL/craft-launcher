@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use artcraft_launcher_core::PackageKind;
 use serde::{Deserialize, Serialize};
+use suitedock_core::PackageKind;
 
 /// One app the launcher installed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

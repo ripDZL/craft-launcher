@@ -1,11 +1,11 @@
 //! The header, toolbar, footer, the grid of cards and the table, laid out like the apps page on
 //! getartcraft.com: hairline cells, mono labels and square controls.
 
-use artcraft_launcher_core::platform::pick_asset;
-use artcraft_launcher_core::protocol::{Command, JobPhase};
-use artcraft_launcher_core::status::AppStatus;
-use artcraft_launcher_core::{AppGroup, SUITE, time};
 use egui::{Color32, CornerRadius, Rect, RichText, Sense, Stroke, Ui, vec2};
+use suitedock_core::platform::pick_asset;
+use suitedock_core::protocol::{Command, JobPhase};
+use suitedock_core::status::AppStatus;
+use suitedock_core::{AppGroup, SUITE, time};
 
 use crate::app::{Dialog, LauncherUi, TitleBar};
 use crate::model::{self, AppEntry};
@@ -51,10 +51,10 @@ impl LauncherUi {
             if bar == TitleBar::MacOs {
                 ui.add_space(TRAFFIC_LIGHTS_W);
             }
-            // The ArtCraft wordmark exactly as supplied, in its own cell.
-            let logo = vec2(14.0 * crate::icons::ARTCRAFT_LOGO_ASPECT, 14.0);
+            // The fork's original wordmark, in the existing header cell.
+            let logo = vec2(14.0 * crate::icons::SUITEDOCK_LOGO_ASPECT, 14.0);
             let (cell, _) = ui.allocate_exact_size(vec2(logo.x + 40.0, h), Sense::hover());
-            egui::Image::new(crate::icons::artcraft_logo(t.dark)).alt_text("ArtCraft").paint_at(ui, Rect::from_center_size(cell.center(), logo));
+            egui::Image::new(crate::icons::suitedock_logo(t.dark)).alt_text("SuiteDock").paint_at(ui, Rect::from_center_size(cell.center(), logo));
             widgets::rule(ui, h);
             ui.add_space(16.0);
             widgets::tag(ui, "Launcher", t.invert_bg, t.invert_fg);
@@ -70,12 +70,14 @@ impl LauncherUi {
                 if widgets::nav_icon(ui, "⟳", "Check for updates", h, self.checking).clicked() {
                     self.check_now();
                 }
-                ui.add_space(6.0);
-                if widgets::nav_link(ui, "Discord", "Join the ArtCraft community on Discord", h, false).clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(artcraft_launcher_core::catalog::DISCORD_URL));
+                if self.settings.show_social_links {
+                    ui.add_space(6.0);
+                    if widgets::nav_link(ui, "Discord", "Join the ArtCraft community on Discord", h, false).clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(suitedock_core::catalog::DISCORD_URL));
+                    }
+                    ui.add_space(6.0);
+                    widgets::rule(ui, h);
                 }
-                ui.add_space(6.0);
-                widgets::rule(ui, h);
                 ui.add_space(6.0);
                 // Right to left: Table, then Grid, so they read Grid · Table.
                 for (mode, label, tip) in [(ViewMode::Table, "Table", "Show apps as a table"), (ViewMode::Grid, "Grid", "Show apps as cards")] {
@@ -100,11 +102,7 @@ impl LauncherUi {
                     ui.horizontal(|ui| {
                         widgets::tag(ui, "Update", t.accent, Color32::WHITE);
                         ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("ArtCraft Launcher {} is available.", r.version_label()))
-                                .family(theme::medium())
-                                .color(t.ink_strong),
-                        );
+                        ui.label(RichText::new(format!("SuiteDock {} is available.", r.version_label())).family(theme::medium()).color(t.ink_strong));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some(phase) = self.launcher_job {
                                 let (fraction, caption) = match phase {
@@ -209,7 +207,7 @@ impl LauncherUi {
     /// News from ArtCraft's release feed (and app renames), until the user dismisses each.
     fn announcements(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
-        let shown: Vec<artcraft_launcher_core::feed::Notice> =
+        let shown: Vec<suitedock_core::feed::Notice> =
             self.announcements.iter().filter(|n| !self.settings.dismissed_notices.contains(&n.id)).take(3).cloned().collect();
         for notice in shown {
             egui::Frame::new().fill(t.sunken).stroke(t.hairline()).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
@@ -263,18 +261,20 @@ impl LauncherUi {
                     None => "No downloads for this system".into(),
                 };
                 widgets::hud(ui, &label, t.faint);
-                ui.add_space(16.0);
-                // Right to left, so this reads: Website · GitHub · Discord, then the social icons.
-                ui.scope(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    widgets::social_icons(ui, 13.0);
-                });
-                ui.add_space(12.0);
-                ui.spacing_mut().item_spacing.x = 16.0;
-                use artcraft_launcher_core::catalog::{DISCORD_URL, GITHUB_URL, WEBSITE_URL};
-                widgets::hud_link(ui, "Discord", DISCORD_URL);
-                widgets::hud_link(ui, "GitHub", GITHUB_URL);
-                widgets::hud_link(ui, "Website", WEBSITE_URL);
+                if self.settings.show_social_links {
+                    ui.add_space(16.0);
+                    // Right to left, so this reads: Website · GitHub · Discord, then the social icons.
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        widgets::social_icons(ui, 13.0);
+                    });
+                    ui.add_space(12.0);
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    use suitedock_core::catalog::{DISCORD_URL, GITHUB_URL, WEBSITE_URL};
+                    widgets::hud_link(ui, "Discord", DISCORD_URL);
+                    widgets::hud_link(ui, "GitHub", GITHUB_URL);
+                    widgets::hud_link(ui, "Website", WEBSITE_URL);
+                }
             });
         });
     }
@@ -556,7 +556,7 @@ impl LauncherUi {
     pub(crate) fn trademark_notice(&self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         ui.add_space(8.0);
-        ui.add(egui::Label::new(RichText::new(artcraft_launcher_core::catalog::TRADEMARK_NOTICE).size(11.0).color(t.faint)).wrap());
+        ui.add(egui::Label::new(RichText::new(suitedock_core::catalog::TRADEMARK_NOTICE).size(11.0).color(t.faint)).wrap());
     }
 
     // ---- actions -------------------------------------------------------------------------
@@ -787,11 +787,11 @@ fn version_line(e: &AppEntry, status: &AppStatus) -> String {
 }
 
 /// The launcher's own download for this platform.
-fn launcher_download(r: &artcraft_launcher_core::Release, p: artcraft_launcher_core::Platform) -> Option<String> {
-    use artcraft_launcher_core::PackageKind;
+fn launcher_download(r: &suitedock_core::Release, p: suitedock_core::Platform) -> Option<String> {
+    use suitedock_core::PackageKind;
     let kinds: &[PackageKind] = match p.os {
-        artcraft_launcher_core::Os::Linux => &[PackageKind::AppImage, PackageKind::Deb],
+        suitedock_core::Os::Linux => &[PackageKind::AppImage, PackageKind::Deb],
         _ => p.default_kinds(),
     };
-    pick_asset(r, &[artcraft_launcher_core::catalog::LAUNCHER_ID], p, kinds).map(|(a, _)| a.url.clone())
+    pick_asset(r, &[suitedock_core::catalog::LAUNCHER_ID], p, kinds).map(|(a, _)| a.url.clone())
 }

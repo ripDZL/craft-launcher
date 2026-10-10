@@ -1,6 +1,6 @@
 [package]
-name = "artcraft-launcher-native"
-description = "ArtCraft Launcher desktop backend: release lookups, detecting installed Craft Apps, installing and updating them"
+name = "suitedock-native"
+description = "SuiteDock desktop backend: release lookups, detecting installed Craft Apps, installing and updating them"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ publish = false
 workspace = true
 
 [dependencies]
-artcraft-launcher-core = { workspace = true }
+suitedock-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

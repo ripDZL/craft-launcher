@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use artcraft_launcher_core::protocol::{Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, LatestRelease, PAUSED, Source};
-use artcraft_launcher_core::release::Release;
-use artcraft_launcher_core::status::AppStatus;
-use artcraft_launcher_core::{Platform, SUITE};
+use suitedock_core::protocol::{Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, LatestRelease, PAUSED, Source};
+use suitedock_core::release::Release;
+use suitedock_core::status::AppStatus;
+use suitedock_core::{Platform, SUITE};
 
 use crate::model::AppEntry;
 use crate::settings::{Filter, Settings, SortKey, ViewMode};
@@ -77,13 +77,13 @@ pub struct LauncherUi {
     pub(crate) rate_limited_until: Option<i64>,
     pub(crate) launcher_update: Option<Release>,
     /// The launcher's own update, while it downloads and installs.
-    pub(crate) launcher_job: Option<artcraft_launcher_core::protocol::JobPhase>,
+    pub(crate) launcher_job: Option<suitedock_core::protocol::JobPhase>,
     /// The new launcher is in place: quit so it can start.
     restart_requested: bool,
     /// News from ArtCraft's release feed, shown inline until dismissed.
-    pub(crate) announcements: Vec<artcraft_launcher_core::feed::Notice>,
+    pub(crate) announcements: Vec<suitedock_core::feed::Notice>,
     /// Alerts from the feed, shown as popups until acknowledged.
-    pub(crate) alerts: Vec<artcraft_launcher_core::feed::Notice>,
+    pub(crate) alerts: Vec<suitedock_core::feed::Notice>,
     pub(crate) search: String,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) dialog: Option<Dialog>,
@@ -235,7 +235,7 @@ impl LauncherUi {
                 true
             }
             Event::Progress { app, phase } => {
-                if app == artcraft_launcher_core::catalog::LAUNCHER_ID {
+                if app == suitedock_core::catalog::LAUNCHER_ID {
                     self.launcher_job = Some(phase);
                 } else if let Some(e) = self.entry_mut(&app) {
                     e.job = Some(phase);
@@ -258,7 +258,7 @@ impl LauncherUi {
                 false
             }
             Event::JobFinished { app, result } => {
-                if app == artcraft_launcher_core::catalog::LAUNCHER_ID {
+                if app == suitedock_core::catalog::LAUNCHER_ID {
                     self.launcher_job = None;
                 }
                 if let Some(e) = self.entry_mut(&app) {
@@ -308,7 +308,7 @@ impl LauncherUi {
         }
         if self.settings.notify {
             let (title, body) = match fresh.as_slice() {
-                [(_, name, v)] => (format!("{name} {v} is available"), "Open ArtCraft Launcher to update.".to_string()),
+                [(_, name, v)] => (format!("{name} {v} is available"), "Open SuiteDock to update.".to_string()),
                 many => {
                     (format!("{} updates are available", many.len()), many.iter().map(|(_, n, v)| format!("{n} {v}")).collect::<Vec<_>>().join(", "))
                 }
@@ -447,7 +447,7 @@ impl LauncherUi {
     /// "ArtCraft API", "GitHub" or "ArtCraft API and GitHub": the services behind the releases on
     /// screen right now. `None` until something has loaded.
     pub(crate) fn sources_label(&self) -> Option<String> {
-        use artcraft_launcher_core::protocol::Origin;
+        use suitedock_core::protocol::Origin;
         let mut api = false;
         let mut github = false;
         for e in &self.entries {

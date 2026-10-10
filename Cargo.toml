@@ -3,11 +3,11 @@ resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4-beta.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
-repository = "https://github.com/storytold/craft-launcher"
+repository = "https://github.com/ripDZL/craft-launcher"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -17,9 +17,9 @@ dbg_macro = "warn"
 todo = "warn"
 
 [workspace.dependencies]
-artcraft-launcher-core = { path = "crates/core" }
-artcraft-launcher-ui-egui = { path = "crates/ui-egui" }
-artcraft-launcher-native = { path = "crates/native" }
+suitedock-core = { path = "crates/core" }
+suitedock-ui-egui = { path = "crates/ui-egui" }
+suitedock-native = { path = "crates/native" }
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
 egui_extras = { version = "0.36", default-features = false }

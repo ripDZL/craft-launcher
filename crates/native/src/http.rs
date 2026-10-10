@@ -4,12 +4,12 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use artcraft_launcher_core::protocol::{CANCELLED, PAUSED};
 use std::time::Duration;
+use suitedock_core::protocol::{CANCELLED, PAUSED};
 
 use sha2::{Digest, Sha256};
 
-const USER_AGENT: &str = concat!("ArtCraftLauncher/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("SuiteDock/", env!("CARGO_PKG_VERSION"));
 /// Largest JSON or text answer we read.
 const MAX_SMALL: u64 = 4 << 20;
 
@@ -89,7 +89,7 @@ impl Http {
             .new_agent();
         // An optional token raises GitHub's limit from 60 to 5000 requests an hour. Only ever sent
         // to api.github.com.
-        let token = std::env::var("ARTCRAFT_LAUNCHER_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let token = std::env::var("SUITEDOCK_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         Ok(Self { small, feed, no_redirect, download, token })
     }
 
@@ -727,7 +727,7 @@ mod tests {
         assert!(!part_path(&dest, body.len() as u64).exists());
     }
 
-    /// Live: a real Craft App release asset (`cargo test -p artcraft-launcher-native -- --ignored`).
+    /// Live: a real Craft App release asset (`cargo test -p suitedock-native -- --ignored`).
     #[test]
     #[ignore = "needs network access"]
     fn downloads_a_real_release_asset() {
@@ -735,9 +735,9 @@ mod tests {
         let Fetched::Body { text, .. } = http.get_api("https://api.github.com/repos/storytold/wordcraft/releases/latest", None).unwrap() else {
             panic!("no release")
         };
-        let release = artcraft_launcher_core::release::parse_github_release(&text, "storytold/wordcraft").unwrap();
+        let release = suitedock_core::release::parse_github_release(&text, "storytold/wordcraft").unwrap();
         let sums_url = &release.sums_asset().unwrap().url;
-        let sums = artcraft_launcher_core::release::parse_sha256sums(&http.get_text(sums_url).unwrap().unwrap());
+        let sums = suitedock_core::release::parse_sha256sums(&http.get_text(sums_url).unwrap().unwrap());
         let asset = release.assets.iter().find(|a| a.name.ends_with("freebsd-x86_64.tar.gz")).unwrap();
         let sha = asset.sha256.clone().or_else(|| sums.iter().find(|(_, n)| *n == asset.name).map(|(h, _)| h.clone())).unwrap();
         let dir = tempfile::tempdir().unwrap();
