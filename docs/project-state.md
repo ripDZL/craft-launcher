@@ -45,5 +45,6 @@ passed, with 2 existing tests ignored. Regression tests use blocked fake jobs to
 order, cancellation, duplicate prevention, restarting an idle worker, and continuation after
 paused/failed jobs. UI tests verify queued controls in both layouts. Native tests used the
 session CA bundle as before. The wasm checks now pass for both core and the complete shared UI/web
-crate. Trunk release bundling and GitHub CI results have not been verified. Build the Windows x64
-portable launcher before delivering beta.2.
+crate, and wasm Clippy also passed with -D warnings. The beta.2 Windows x64 release build passed
+with static CRT and required icon resources. Trunk release bundling and GitHub CI results have
+not been verified. Deliver the compiled launcher and complete source in the versioned ZIP.
