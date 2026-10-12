@@ -106,6 +106,7 @@ impl LauncherUi {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some(phase) = self.launcher_job {
                                 let (fraction, caption) = match phase {
+                                    JobPhase::Queued => (None, "Queued".to_string()),
                                     JobPhase::Downloading { done, total } if total > 0 => (
                                         Some(done as f32 / total as f32),
                                         format!("Downloading {} of {}", widgets::human_bytes(done), widgets::human_bytes(total)),
@@ -593,6 +594,13 @@ impl LauncherUi {
         let gap = ui.spacing().item_spacing.x;
         let main_w = (width - theme::CONTROL_H - gap).max(120.0);
         if let Some(phase) = entry.job {
+            if phase == JobPhase::Queued {
+                ui.add_enabled_ui(false, |ui| widgets::button(ui, "Queued", Kind::Secondary, main_w));
+                if widgets::glyph_button(ui, widgets::Glyph::Close, "Cancel queued update").clicked() {
+                    self.send(Command::Cancel { app: id });
+                }
+                return;
+            }
             // Two square buttons (pause, cancel) beside the bar while downloading.
             let bar_w = (width - 2.0 * (theme::CONTROL_H + gap) - 4.0).max(100.0);
             let short = bar_w < 200.0;
@@ -600,6 +608,7 @@ impl LauncherUi {
                 if total > 0 { format!("{} of {}", widgets::human_bytes(done), widgets::human_bytes(total)) } else { widgets::human_bytes(done) }
             };
             let (fraction, caption, color) = match phase {
+                JobPhase::Queued => (None, "Queued".into(), t.faint),
                 JobPhase::Downloading { done, total } => {
                     let f = (total > 0).then(|| done as f32 / total as f32);
                     let pct = f.map(|f| format!(" · {:.0}%", f * 100.0)).unwrap_or_default();

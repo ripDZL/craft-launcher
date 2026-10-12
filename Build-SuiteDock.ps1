@@ -17,7 +17,9 @@ try {
     if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) { throw 'rustup is missing. This build uses the stable MSVC toolchain from https://rustup.rs/.' }
     $Info = rustc -vV
     if (($Info -join "`n") -notmatch 'host: x86_64-pc-windows-msvc') { throw 'Use the x86_64-pc-windows-msvc Rust toolchain for this Windows x64 build.' }
-    Write-Host 'SuiteDock 0.1.4-beta.1 - native Windows x64 build'
+    $Version = (& cargo xtask version).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the workspace version.' }
+    Write-Host "SuiteDock $Version - native Windows x64 build"
     Write-Host 'Needs Visual Studio C++ Build Tools and Windows SDK. First build downloads dependencies.'
     if (-not $SkipChecks) {
         Native 'Install WebAssembly target' { rustup target add wasm32-unknown-unknown }
@@ -32,8 +34,6 @@ try {
     $env:SUITEDOCK_REQUIRE_WINRES = '1'
     $env:SUITEDOCK_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
     Native 'Release build' { cargo build --release --locked -p suitedock --target x86_64-pc-windows-msvc }
-    $Version = (& cargo xtask version).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Could not read the workspace version.' }
     $Dist = Join-Path $Root 'dist'
     $Portable = Join-Path $Dist "suitedock-$Version-windows-x64-portable"
     New-Item -ItemType Directory -Force -Path $Portable | Out-Null

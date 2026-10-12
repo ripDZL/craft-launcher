@@ -9,7 +9,7 @@ use suitedock_core::catalog::{LAUNCHER, LAUNCHER_ID};
 use suitedock_core::feed::{Feed, FeedAnswer};
 use suitedock_core::platform::{Arch, Os, Platform, pick_asset};
 use suitedock_core::protocol::{
-    Backend, BackendOptions, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload, Source,
+    Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload, Source,
 };
 use suitedock_core::release::{Asset, Release};
 use suitedock_core::{CraftApp, Installed, PackageKind, SUITE, version};
@@ -51,6 +51,7 @@ struct Shared {
     latest: Mutex<HashMap<String, Release>>,
     installed: Mutex<HashMap<String, Installed>>,
     jobs: Mutex<HashMap<String, Arc<Stop>>>,
+    job_queue: crate::job_queue::JobQueue,
     manifest: Mutex<Manifest>,
     options: Mutex<BackendOptions>,
     checking: AtomicBool,
@@ -113,6 +114,7 @@ impl NativeBackend {
             latest: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
+            job_queue: crate::job_queue::JobQueue::default(),
             manifest: Mutex::new(Manifest::load(&paths.manifest())),
             options: Mutex::new(BackendOptions::default()),
             checking: AtomicBool::new(false),
@@ -288,22 +290,27 @@ impl NativeBackend {
     fn start_job(&self, app_id: &str, uninstall: bool) {
         let Some(app) = CraftApp::by_id(app_id) else { return };
         let stop = Arc::new(Stop::default());
-        {
-            let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-            if jobs.contains_key(app.id) {
-                return;
-            }
-            jobs.insert(app.id.to_string(), stop.clone());
+        let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        if jobs.contains_key(app.id) {
+            return;
         }
+        if jobs.contains_key(LAUNCHER_ID) {
+            self.shared.emit(Event::JobFinished { app: app.id.to_string(), result: Err("Wait for SuiteDock to finish updating first.".into()) });
+            return;
+        }
+        jobs.insert(app.id.to_string(), stop.clone());
+        self.shared.emit(Event::Progress { app: app.id.to_string(), phase: JobPhase::Queued });
         let shared = self.shared.clone();
         let paths = self.paths.clone();
         let http = self.http.clone();
         let platform = self.platform;
         let options = self.options();
-        std::thread::spawn(move || {
+        self.shared.job_queue.push(app.id, move || {
             let existing = shared.installed.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned();
             let record = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).apps.get(app.id).cloned();
-            let result = if uninstall {
+            let result = if let Err(error) = stop.check() {
+                Err(error)
+            } else if uninstall {
                 shared.emit(Event::Progress { app: app.id.to_string(), phase: JobPhase::Removing });
                 match &existing {
                     Some(inst) => install::uninstall(app, inst, record.as_ref()).map(|()| {
@@ -337,7 +344,8 @@ impl NativeBackend {
                 };
             }
             shared.emit(Event::Detected { app: app.id.to_string(), installed: found });
-            shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).remove(app.id);
+            let mut jobs = shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+            jobs.remove(app.id);
             shared.emit(Event::JobFinished { app: app.id.to_string(), result });
         });
     }
@@ -357,6 +365,11 @@ impl NativeBackend {
         {
             let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
             if jobs.contains_key(&id) {
+                return;
+            }
+            if !jobs.is_empty() {
+                self.shared
+                    .emit(Event::JobFinished { app: id, result: Err("Finish or cancel the queued app updates before updating SuiteDock.".into()) });
                 return;
             }
             jobs.insert(id.clone(), stop.clone());
@@ -683,7 +696,16 @@ impl Backend for NativeBackend {
                 }
             }
             Command::Cancel { app } => {
-                let running = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).get(&app).cloned();
+                let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+                if self.shared.job_queue.cancel(&app) {
+                    if let Some(stop) = jobs.remove(&app) {
+                        stop.cancel();
+                    }
+                    self.shared.emit(Event::JobFinished { app, result: Err(CANCELLED.into()) });
+                    return;
+                }
+                let running = jobs.get(&app).cloned();
+                drop(jobs);
                 match running {
                     Some(stop) => stop.cancel(),
                     // A paused download: throw its partial file away.
@@ -796,6 +818,7 @@ mod tests {
             latest: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
+            job_queue: crate::job_queue::JobQueue::default(),
             manifest: Mutex::new(Manifest::default()),
             options: Mutex::new(BackendOptions::default()),
             checking: AtomicBool::new(false),
@@ -809,6 +832,76 @@ mod tests {
             feed_ok_at: Mutex::new(None),
             feed_throttle: Mutex::new(FeedThrottle::new()),
         }
+    }
+
+    #[test]
+    fn a_paused_or_failed_update_does_not_block_the_next_app() {
+        use std::sync::mpsc;
+        let (wake, awakened) = mpsc::channel();
+        let mut state = shared();
+        state.waker = Arc::new(move || {
+            let _ = wake.send(());
+        });
+        let state = Arc::new(state);
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend =
+            NativeBackend { shared: state.clone(), paths: Paths::under(dir.path()), http: None, source: None, platform: None, self_install: None };
+        let (started, ready) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        state.job_queue.push("running installer", move || {
+            started.send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        for app in ["photocraft", "effectcraft", "vectorcraft"] {
+            backend.send(Command::Install { app: app.into() });
+        }
+        backend.send(Command::Pause { app: "photocraft".into() });
+        release.send(()).unwrap();
+        let mut finished = Vec::new();
+        while finished.len() < 3 {
+            awakened.recv_timeout(Duration::from_secs(10)).unwrap();
+            for event in backend.poll() {
+                if let Event::JobFinished { app, result } = event {
+                    finished.push((app, result));
+                }
+            }
+        }
+        assert_eq!(finished[0], ("photocraft".into(), Err(PAUSED.into())));
+        assert_eq!(finished[1].0, "effectcraft");
+        assert_eq!(finished[2].0, "vectorcraft");
+        assert!(finished[1].1.is_err() && finished[2].1.is_err());
+        assert!(state.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn queued_updates_are_deduplicated_and_cancelled_before_they_start() {
+        use std::sync::mpsc;
+        let state = Arc::new(shared());
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend =
+            NativeBackend { shared: state.clone(), paths: Paths::under(dir.path()), http: None, source: None, platform: None, self_install: None };
+        let (started, ready) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        state.job_queue.push("running installer", move || {
+            started.send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        backend.send(Command::Install { app: "photocraft".into() });
+        backend.send(Command::Install { app: "photocraft".into() });
+        backend.send(Command::Install { app: "effectcraft".into() });
+        let events = backend.poll();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| matches!(event, Event::Progress { phase: JobPhase::Queued, .. })));
+        assert_eq!(state.jobs.lock().unwrap().len(), 2);
+        backend.send(Command::Cancel { app: "photocraft".into() });
+        assert_eq!(backend.poll(), vec![Event::JobFinished { app: "photocraft".into(), result: Err(CANCELLED.into()) }]);
+        assert!(!state.jobs.lock().unwrap().contains_key("photocraft"));
+        assert!(state.jobs.lock().unwrap().contains_key("effectcraft"));
+        backend.send(Command::Cancel { app: "effectcraft".into() });
+        assert!(state.jobs.lock().unwrap().is_empty());
+        release.send(()).unwrap();
     }
 
     #[test]

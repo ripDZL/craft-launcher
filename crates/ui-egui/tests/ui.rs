@@ -104,9 +104,18 @@ fn events() -> Vec<Event> {
 }
 
 fn harness(view: ViewMode, theme: egui::Theme, manage: bool) -> (Harness<'static, Option<LauncherUi>>, Rc<RefCell<Vec<Command>>>) {
+    harness_events(view, theme, manage, events())
+}
+
+fn harness_events(
+    view: ViewMode,
+    theme: egui::Theme,
+    manage: bool,
+    initial: Vec<Event>,
+) -> (Harness<'static, Option<LauncherUi>>, Rc<RefCell<Vec<Command>>>) {
     let sent = Rc::new(RefCell::new(Vec::new()));
     let sent2 = sent.clone();
-    let mut backend = Some(Fake { events: events(), sent: sent2, manage, clock: Rc::new(Cell::new(NOW)) });
+    let mut backend = Some(Fake { events: initial, sent: sent2, manage, clock: Rc::new(Cell::new(NOW)) });
     let settings = Settings { view, notify: false, ..Settings::default() };
     let harness = Harness::builder().with_size(egui::vec2(1180.0, 900.0)).with_theme(theme).wgpu().build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
@@ -135,6 +144,25 @@ fn snapshot(h: &mut Harness<'_, Option<LauncherUi>>, name: &str) {
     let Some(dir) = std::env::var_os("SUITEDOCK_SNAPSHOTS") else { return };
     let img = h.render().unwrap();
     img.save(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
+}
+
+#[test]
+fn queued_updates_show_their_cancel_control_and_are_not_submitted_again() {
+    for view in [ViewMode::Grid, ViewMode::Table] {
+        let mut initial = events();
+        initial.push(Event::Progress { app: "photocraft".into(), phase: JobPhase::Queued });
+        let (mut h, sent) = harness_events(view, egui::Theme::Dark, true, initial);
+        h.run_steps(6);
+        assert!(h.query_all_by_label("Queued").count() >= 1);
+        assert!(h.query_by_label("Update to 0.5.0").is_none());
+        h.get_by_label("Update all (2)").click();
+        h.run_steps(2);
+        assert!(sent.borrow().contains(&Command::Install { app: "effectcraft".into() }));
+        assert!(!sent.borrow().contains(&Command::Install { app: "photocraft".into() }));
+        h.get_by_label("Cancel queued update").click();
+        h.run_steps(2);
+        assert!(sent.borrow().contains(&Command::Cancel { app: "photocraft".into() }));
+    }
 }
 
 #[test]

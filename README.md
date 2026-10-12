@@ -9,6 +9,12 @@ installation, update notifications and web build remain available.
 
 ## Quality of life
 
+**Update all** runs one app at a time: download, verify, install, then start the next app.
+Waiting apps show **Queued** and can be cancelled before they start. Pausing or cancelling
+the current download, or an update failing, allows the remaining queue to continue. Resuming
+an app adds it to the end of the queue. Individual installs and removals use the same queue.
+SuiteDock's own update can be started after the app queue finishes, avoiding conflicting installers.
+
 **Settings → Appearance → Show community and social links outside Settings** controls Discord,
 general Website/GitHub links and all social pictograms in the header, footer and system tray.
 They are hidden by default. The choice is saved across restarts; old settings use the new default.

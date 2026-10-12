@@ -94,6 +94,7 @@ pub fn status_text(status: &AppStatus, manage_apps: bool) -> (&'static str, Tone
 /// [`status_text`], but saying so when a download is paused or reconnecting.
 pub fn entry_status_text(e: &AppEntry, status: &AppStatus, manage_apps: bool) -> (&'static str, Tone) {
     match (e.job, e.paused) {
+        (Some(JobPhase::Queued), _) => ("Queued", Tone::Neutral),
         (Some(JobPhase::Reconnecting { .. }), _) => ("Reconnecting…", Tone::Warn),
         (Some(JobPhase::Downloading { .. }), _) if status.is_installed() => ("Updating…", Tone::Info),
         (Some(JobPhase::Downloading { .. }), _) => ("Downloading…", Tone::Info),

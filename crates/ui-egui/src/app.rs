@@ -258,6 +258,7 @@ impl LauncherUi {
                 false
             }
             Event::JobFinished { app, result } => {
+                let was_queued = self.entry(&app).is_some_and(|e| e.job == Some(suitedock_core::protocol::JobPhase::Queued));
                 if app == suitedock_core::catalog::LAUNCHER_ID {
                     self.launcher_job = None;
                 }
@@ -268,7 +269,7 @@ impl LauncherUi {
                     Ok(msg) => self.toast(ctx, msg, false),
                     // The paused card says it all.
                     Err(e) if e == PAUSED => {}
-                    Err(e) if e == CANCELLED => self.toast(ctx, "Download cancelled", false),
+                    Err(e) if e == CANCELLED => self.toast(ctx, if was_queued { "Queued update cancelled" } else { "Download cancelled" }, false),
                     Err(e) => self.toast(ctx, e, true),
                 }
                 true

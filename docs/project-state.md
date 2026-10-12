@@ -1,7 +1,7 @@
 # SuiteDock project state
 
 2026-10-10: independent fork at ripDZL/craft-launcher, based on upstream release 0.1.3
-(3a1140e949e6e0a79d2eae5587dd5909b0cb0f60). Working version 0.1.4-beta.1.
+(3a1140e949e6e0a79d2eae5587dd5909b0cb0f60). Working version 0.1.4-beta.2.
 
 User requirements: keep the official native Rust launcher and its functions; add a saved hide/show
 control for all social/community shortcuts outside Settings; replace protected graphics with our own.
@@ -30,3 +30,20 @@ has been preserved. Do not apply broad textual patches there or overwrite its un
 
 Next changes should read live source and this file first. Preserve layouts, all controls, themes,
 install/detection/update behavior, release checksums, and the web build. No Electron/webview.
+
+2026-10-11, beta.2: the user reported that Update all starts every installer at once. Native app
+jobs now share one FIFO worker for the entire download/verification/install/removal operation.
+Each job finishes and reports its result before the next begins. Queued jobs show Queued with
+a cancel control in grid/table views, and repeated submissions are ignored. Removing a queued
+job preserves any download that was already paused before it was queued. Paused, cancelled,
+and failed jobs release the worker; resuming appends the app to the end of the queue. Launcher
+self-updates and app jobs cannot start competing installers or restart during an app queue.
+The worker drains and exits when idle, and restarts for later requests.
+
+Beta.2 validation: formatting and workspace Clippy (-D warnings) passed. All 98 workspace tests
+passed, with 2 existing tests ignored. Regression tests use blocked fake jobs to verify request
+order, cancellation, duplicate prevention, restarting an idle worker, and continuation after
+paused/failed jobs. UI tests verify queued controls in both layouts. Native tests used the
+session CA bundle as before. The wasm checks now pass for both core and the complete shared UI/web
+crate. Trunk release bundling and GitHub CI results have not been verified. Build the Windows x64
+portable launcher before delivering beta.2.

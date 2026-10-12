@@ -37,7 +37,7 @@ pub enum Command {
     Pause {
         app: String,
     },
-    /// Stop a running download, or throw away a paused one.
+    /// Stop a running download, remove a waiting job, or throw away a paused download.
     Cancel {
         app: String,
     },
@@ -69,6 +69,8 @@ pub enum LatestRelease {
 /// What a running job is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobPhase {
+    /// Waiting for the previous app's download and installer to finish.
+    Queued,
     Downloading {
         done: u64,
         total: u64,
