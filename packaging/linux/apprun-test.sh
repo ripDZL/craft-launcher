@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-APP_ID=ai.storyteller.artcraft-launcher
+APP_ID=io.github.ripdzl.suitedock
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -20,16 +20,16 @@ install -Dm755 "$HERE/AppRun" "$APPDIR/AppRun"
 install -Dm644 "$HERE/$APP_ID.desktop" "$APPDIR/usr/share/applications/$APP_ID.desktop"
 mkdir -p "$APPDIR/usr/share/icons"
 cp -R "$ROOT/assets/app-icon/hicolor" "$APPDIR/usr/share/icons/"
-printf '#!/bin/sh\necho "stub: $*"\n' >"$APPDIR/usr/bin/artcraft-launcher"
-chmod +x "$APPDIR/usr/bin/artcraft-launcher"
+printf '#!/bin/sh\necho "stub: $*"\n' >"$APPDIR/usr/bin/suitedock"
+chmod +x "$APPDIR/usr/bin/suitedock"
 
-APPIMAGE="$TMP/artcraft-launcher test.AppImage" # spaces on purpose: Exec must stay quoted
+APPIMAGE="$TMP/suitedock test.AppImage" # spaces on purpose: Exec must stay quoted
 : >"$APPIMAGE"
 export APPIMAGE
 export HOME="$TMP/home"
 export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$HOME"
-unset DESKTOPINTEGRATION ARTCRAFT_LAUNCHER_NO_DESKTOP_INTEGRATION
+unset DESKTOPINTEGRATION SUITEDOCK_NO_DESKTOP_INTEGRATION
 
 # Record cache refreshes without needing a desktop or GTK installation.
 export REAL_CACHE_UPDATER
@@ -96,7 +96,7 @@ cp "$DESKTOP" "$TMP/generated-entry"
 
 # 6. Opt-out installs nothing.
 rm -rf "$XDG_DATA_HOME"
-ARTCRAFT_LAUNCHER_NO_DESKTOP_INTEGRATION=1 "$APPDIR/AppRun" >/dev/null || fail "opt-out launch exited non-zero"
+SUITEDOCK_NO_DESKTOP_INTEGRATION=1 "$APPDIR/AppRun" >/dev/null || fail "opt-out launch exited non-zero"
 [[ ! -e "$XDG_DATA_HOME" ]] || fail "opt-out still integrated"
 
 # 7. An unwritable data dir never blocks the launch.
