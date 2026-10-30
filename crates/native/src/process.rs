@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn running_paths_are_matched_literally() {
-        let root = format!("/tmp/artcraft-launcher-process-{}", std::process::id());
+        let root = format!("/tmp/suitedock-process-{}", std::process::id());
         for (actual, requested, expected) in [
             ("plain/PhotoCraft.app", "plain/PhotoCraft.app", true),
             ("Apps (work)/PhotoCraft.app", "Apps (work)/PhotoCraft.app", true),
@@ -615,8 +615,8 @@ mod explorer_tests {
 
     #[test]
     fn explorer_select_uses_backslashes() {
-        let arg = explorer_select_arg(Path::new("C:/Users/A B/AppData/Local/ArtCraft Launcher/apps/photocraft.exe"));
-        assert_eq!(arg.unwrap(), r#"/select,"C:\Users\A B\AppData\Local\ArtCraft Launcher\apps\photocraft.exe""#);
+        let arg = explorer_select_arg(Path::new("C:/Users/A B/AppData/Local/SuiteDock/apps/photocraft.exe"));
+        assert_eq!(arg.unwrap(), r#"/select,"C:\Users\A B\AppData\Local\SuiteDock\apps\photocraft.exe""#);
     }
 }
 
