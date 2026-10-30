@@ -1,11 +1,11 @@
 [package]
-name = "artcraft-launcher"
-description = "ArtCraft Launcher: install, update and open the Craft App Suite"
+name = "suitedock"
+description = "SuiteDock: install, update and open the Craft App Suite"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-default-run = "artcraft-launcher"
+default-run = "suitedock"
 build = "build.rs"
 publish = false
 

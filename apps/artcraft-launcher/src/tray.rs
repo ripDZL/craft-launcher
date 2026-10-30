@@ -24,6 +24,9 @@ pub struct Tray {
     tooltip: String,
     language: String,
     labels: Vec<(MenuItem, &'static str)>,
+    menu: Menu,
+    community_items: Vec<MenuItem>,
+    show_social_links: bool,
 }
 
 fn load_icon() -> Result<tray_icon::Icon, String> {
@@ -31,9 +34,9 @@ fn load_icon() -> Result<tray_icon::Icon, String> {
     // macOS tints the black mark to the menu bar's colours as a template image; elsewhere the
     // blue mark is shown as supplied.
     let bytes: &[u8] = if cfg!(target_os = "macos") {
-        include_bytes!("../../../docs/brand/artcraft-mark-black-44.png")
+        include_bytes!("../../../docs/brand/suitedock-mark-black-44.png")
     } else {
-        include_bytes!("../../../docs/brand/artcraft-mark-64.png")
+        include_bytes!("../../../docs/brand/suitedock-mark-64.png")
     };
     let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).map_err(|e| e.to_string())?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -46,33 +49,42 @@ fn load_icon() -> Result<tray_icon::Icon, String> {
 /// Windows and macOS keep tray-icon's defaults: there the title is drawn next to the icon (macOS)
 /// or unsupported (Windows), and the id never reaches the user.
 fn identity(builder: TrayIconBuilder) -> TrayIconBuilder {
-    if cfg!(any(target_os = "macos", target_os = "windows")) { builder } else { builder.with_id("artcraft-launcher").with_title("ArtCraft Launcher") }
+    if cfg!(any(target_os = "macos", target_os = "windows")) { builder } else { builder.with_id("suitedock").with_title("SuiteDock") }
 }
 
 impl Tray {
     /// Creates the tray icon. `wake` repaints the UI so it sees the action, even when hidden.
     /// `on_quit` runs when Quit is picked, before the UI can see it: the UI may never get to.
-    pub fn new(wake: impl Fn() + Send + Sync + Clone + 'static, on_quit: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
-        let show = MenuItem::new(i18n::t("Show ArtCraft Launcher"), true, None);
+    pub fn new(
+        wake: impl Fn() + Send + Sync + Clone + 'static,
+        on_quit: impl Fn() + Send + Sync + 'static,
+        show_social_links: bool,
+    ) -> Result<Self, String> {
+        let show = MenuItem::new(i18n::t("Show SuiteDock"), true, None);
         let check = MenuItem::new(i18n::t("Check for Updates"), true, None);
         use artcraft_launcher_core::catalog::{GITHUB_URL, WEBSITE_URL};
         let website = MenuItem::new(i18n::t("Visit getartcraft.com"), true, None);
         let github = MenuItem::new(i18n::t("ArtCraft on GitHub"), true, None);
         let discord = MenuItem::new(i18n::t("Join the ArtCraft Discord"), true, None);
-        let quit = MenuItem::new(i18n::t("Quit ArtCraft Launcher"), true, None);
+        let quit = MenuItem::new(i18n::t("Quit SuiteDock"), true, None);
         let menu = Menu::new();
-        menu.append_items(&[&show, &check, &PredefinedMenuItem::separator(), &website, &github, &discord, &PredefinedMenuItem::separator(), &quit])
-            .map_err(|e| e.to_string())?;
+        menu.append_items(&[&show, &check, &PredefinedMenuItem::separator(), &quit]).map_err(|e| e.to_string())?;
+        let community_items = vec![website.clone(), github.clone(), discord.clone()];
+        if show_social_links {
+            for (index, item) in community_items.iter().enumerate() {
+                menu.insert(item, index + 3).map_err(|e| e.to_string())?;
+            }
+        }
         let links = [(website.id().clone(), WEBSITE_URL), (github.id().clone(), GITHUB_URL)];
         let discord_id = discord.id().clone();
         let image = load_icon()?;
-        let builder = identity(TrayIconBuilder::new()).with_menu(Box::new(menu));
+        let builder = identity(TrayIconBuilder::new()).with_menu(Box::new(menu.clone()));
         // macOS draws the icon as a template image (recoloured for light and dark menu bars).
         #[cfg(target_os = "macos")]
         let builder = builder.with_icon_templated(image);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_icon(image);
-        let icon = builder.with_menu_on_left_click(cfg!(target_os = "macos")).with_tooltip("ArtCraft Launcher").build().map_err(|e| e.to_string())?;
+        let icon = builder.with_menu_on_left_click(cfg!(target_os = "macos")).with_tooltip("SuiteDock").build().map_err(|e| e.to_string())?;
         let (tx, rx): (Sender<TrayAction>, Receiver<TrayAction>) = channel();
         let (show_id, check_id, quit_id) = (show.id().clone(), check.id().clone(), quit.id().clone());
         {
@@ -107,18 +119,44 @@ impl Tray {
             }
         }));
         let labels = vec![
-            (show, "Show ArtCraft Launcher"),
+            (show, "Show SuiteDock"),
             (check, "Check for Updates"),
             (website, "Visit getartcraft.com"),
             (github, "ArtCraft on GitHub"),
             (discord, "Join the ArtCraft Discord"),
-            (quit, "Quit ArtCraft Launcher"),
+            (quit, "Quit SuiteDock"),
         ];
-        Ok(Self { icon, show: show_id, check: check_id, quit: quit_id, rx, tooltip: String::new(), language: String::new(), labels })
+        Ok(Self {
+            icon,
+            show: show_id,
+            check: check_id,
+            quit: quit_id,
+            rx,
+            tooltip: String::new(),
+            language: String::new(),
+            labels,
+            menu,
+            community_items,
+            show_social_links,
+        })
     }
 
     pub fn actions(&self) -> Vec<TrayAction> {
         self.rx.try_iter().collect()
+    }
+
+    pub fn set_social_links(&mut self, visible: bool) -> Result<(), String> {
+        if self.show_social_links == visible { return Ok(()); }
+        for (index, item) in self.community_items.iter().enumerate() {
+            let present = self.menu.items().iter().any(|entry| entry.id() == item.id());
+            if visible && !present {
+                self.menu.insert(item, index + 3).map_err(|e| e.to_string())?;
+            } else if !visible && present {
+                self.menu.remove(item).map_err(|e| e.to_string())?;
+            }
+        }
+        self.show_social_links = visible;
+        Ok(())
     }
 
     pub fn set_updates(&mut self, count: usize) {
@@ -130,9 +168,9 @@ impl Tray {
             self.language = lang.code().to_string();
         }
         let tip = if count == 0 {
-            "ArtCraft Launcher".to_string()
+            "SuiteDock".to_string()
         } else {
-            i18n::trn(lang, count as u64, "ArtCraft Launcher · {n} update available", "ArtCraft Launcher · {n} updates available")
+            i18n::trn(lang, count as u64, "SuiteDock · {n} update available", "SuiteDock · {n} updates available")
         };
         if tip != self.tooltip {
             let _ = self.icon.set_tooltip(Some(&tip));
@@ -158,7 +196,7 @@ mod tests {
             // Left as tray-icon picks it there: "<pid>-<n>".
             assert!(id.as_ref().starts_with(&pid), "{id:?}");
         } else {
-            assert_eq!(id.as_ref(), "artcraft-launcher");
+            assert_eq!(id.as_ref(), "suitedock");
         }
     }
 }
