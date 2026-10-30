@@ -828,10 +828,7 @@ fn prepare_home(home: &Path) {
 /// the user's.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn staging_dir(dir: &Path) -> Result<tempfile::TempDir, String> {
-    tempfile::Builder::new()
-        .prefix(".suitedock-")
-        .tempdir_in(dir)
-        .map_err(|e| format!("couldn't create a staging folder in {} ({e})", dir.display()))
+    tempfile::Builder::new().prefix(".suitedock-").tempdir_in(dir).map_err(|e| format!("couldn't create a staging folder in {} ({e})", dir.display()))
 }
 
 /// Moves `staged` into place at `dest`, keeping the old copy until the new one is there.

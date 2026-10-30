@@ -65,8 +65,7 @@ const MAX_GREETING: usize = 256;
 /// (CWE-522, CWE-287).
 fn token() -> Option<String> {
     use std::io::Read;
-    let dir =
-        dirs::data_local_dir()?.join(if cfg!(any(target_os = "macos", target_os = "windows")) { "SuiteDock" } else { "suitedock" });
+    let dir = dirs::data_local_dir()?.join(if cfg!(any(target_os = "macos", target_os = "windows")) { "SuiteDock" } else { "suitedock" });
     let path = dir.join(".instance-token");
     if let Ok(mut f) = std::fs::File::open(&path) {
         let mut s = String::new();

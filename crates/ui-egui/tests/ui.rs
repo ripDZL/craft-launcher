@@ -354,7 +354,8 @@ fn folder_harness(picked: Rc<RefCell<Option<String>>>) -> (Harness<'static, Opti
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state =
+                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);
@@ -483,7 +484,8 @@ fn version_menu(latest: Release, answer: Vec<Release>) -> VersionsHarness {
     let mut h = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 1200.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state =
+                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut DummyHost);
@@ -686,7 +688,8 @@ fn the_install_folder_fields_default_to_the_hosts_answer() {
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state =
+                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);

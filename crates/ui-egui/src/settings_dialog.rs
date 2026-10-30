@@ -50,13 +50,8 @@ impl LauncherUi {
         let size = sheet::size(ui.ctx(), vec2(1000.0, 820.0));
         ui.set_width(size.x);
         ui.set_max_height(size.y);
-        let hero_h = sheet::hero(
-            ui,
-            Some(crate::icons::suitedock_mark()),
-            tl!("Settings"),
-            &format!("SuiteDock {}", env!("CARGO_PKG_VERSION")),
-            |_| {},
-        );
+        let hero_h =
+            sheet::hero(ui, Some(crate::icons::suitedock_mark()), tl!("Settings"), &format!("SuiteDock {}", env!("CARGO_PKG_VERSION")), |_| {});
 
         let quit_width = widgets::button_width(ui, tl!("Quit SuiteDock"), 0.0);
         let done_width = widgets::button_width(ui, tl!("Done"), 90.0);

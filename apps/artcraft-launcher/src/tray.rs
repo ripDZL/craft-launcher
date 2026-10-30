@@ -146,7 +146,9 @@ impl Tray {
     }
 
     pub fn set_social_links(&mut self, visible: bool) -> Result<(), String> {
-        if self.show_social_links == visible { return Ok(()); }
+        if self.show_social_links == visible {
+            return Ok(());
+        }
         for (index, item) in self.community_items.iter().enumerate() {
             let present = self.menu.items().iter().any(|entry| entry.id() == item.id());
             if visible && !present {

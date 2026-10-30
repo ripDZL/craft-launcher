@@ -162,8 +162,7 @@ fn main() -> ExitCode {
 /// deliberate bundled faces stay in charge, and wgpu limits are clamped to the adapter so a
 /// short adapter cannot fail device creation.
 fn native_options(hidden: bool) -> eframe::NativeOptions {
-    let icon =
-        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/io.github.ripdzl.suitedock.png")).ok();
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/io.github.ripdzl.suitedock.png")).ok();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("SuiteDock")
         .with_app_id(APP_ID)
