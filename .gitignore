@@ -2,10 +2,10 @@
 plan/
 plans/
 /target
-/build-logs/
 target/
 /builds
 builds/
 /dist
 /temp
 /craft-fonts
+result

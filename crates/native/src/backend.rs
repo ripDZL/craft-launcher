@@ -2,25 +2,30 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use suitedock_core::catalog::{LAUNCHER, LAUNCHER_ID};
-use suitedock_core::feed::{Feed, FeedAnswer};
-use suitedock_core::platform::{Arch, Os, Platform, pick_asset};
-use suitedock_core::protocol::{
-    Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload, Source,
+use artcraft_launcher_core::catalog::{LAUNCHER, LAUNCHER_ID};
+use artcraft_launcher_core::feed::{Feed, FeedAnswer};
+use artcraft_launcher_core::platform::{Arch, Os, Platform, pick_asset};
+use artcraft_launcher_core::protocol::{
+    Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, INSTALL_CANCELLED, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload,
+    Source, VersionTrack,
 };
-use suitedock_core::release::{Asset, Release};
-use suitedock_core::{CraftApp, Installed, PackageKind, SUITE, version};
+use artcraft_launcher_core::release::{Asset, Release};
+use artcraft_launcher_core::{CraftApp, Installed, PackageKind, SUITE, version};
 
 use crate::feed_throttle::{self, FeedThrottle, Outcome};
 use crate::http::{self, Http, Stop};
 use crate::install::{self, Job};
 use crate::manifest::Manifest;
 use crate::paths::Paths;
+use crate::process;
 use crate::source::{GitHubSource, ReleaseSource};
 
+/// The longest the launcher's own update waits for other installs to end before it gives up
+/// (it can be cancelled sooner).
+const RESTART_WAIT: Duration = Duration::from_secs(10 * 60);
 /// Automatic checks closer together than this reuse the last answers. The UI asks every five
 /// minutes; this stops a burst of requests (refresh, focus, timers) from repeating work.
 const FRESH_FOR: i64 = 4 * 60;
@@ -51,15 +56,20 @@ struct Shared {
     latest: Mutex<HashMap<String, Release>>,
     installed: Mutex<HashMap<String, Installed>>,
     jobs: Mutex<HashMap<String, Arc<Stop>>>,
-    job_queue: crate::job_queue::JobQueue,
+    /// The launcher is replacing itself and will restart: no new job starts.
+    restarting: AtomicBool,
     manifest: Mutex<Manifest>,
     options: Mutex<BackendOptions>,
     checking: AtomicBool,
     /// A detection pass is running; another request waits for the next one.
     detecting: AtomicBool,
     last_check: Mutex<Option<i64>>,
-    /// The newer SuiteDock release, once a check has found one.
+    /// The newer ArtCraft Launcher release, once a check has found one.
     launcher_release: Mutex<Option<Release>>,
+    /// How this launcher is installed, when it can replace itself. Worked out on the check thread
+    /// just before a newer launcher is announced: finding out can ask the host's Flatpak, which
+    /// mustn't hold up the first frame.
+    self_install: OnceLock<Option<crate::self_update::Install>>,
     /// When GitHub was last asked about each app (Unix seconds), to keep the fallback rare.
     github_asked: Mutex<HashMap<String, i64>>,
     /// Apps with an answer (a release or "none yet") from either service.
@@ -72,6 +82,40 @@ struct Shared {
     feed_ok_at: Mutex<Option<i64>>,
     /// How often ArtCraft's API may be called.
     feed_throttle: Mutex<FeedThrottle>,
+    /// Apps whose details pictures are on their way (a second request meanwhile does nothing).
+    pictures_busy: Mutex<std::collections::HashSet<&'static str>>,
+}
+
+#[derive(Clone, Copy)]
+enum BusyFlag {
+    Checking,
+    Detecting,
+}
+
+struct BusyGuard {
+    shared: Arc<Shared>,
+    flag: BusyFlag,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        let flag = match self.flag {
+            BusyFlag::Checking => &self.shared.checking,
+            BusyFlag::Detecting => &self.shared.detecting,
+        };
+        flag.store(false, Ordering::SeqCst);
+    }
+}
+
+struct JobGuard {
+    shared: Arc<Shared>,
+    app_id: String,
+}
+
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.app_id);
+    }
 }
 
 impl Shared {
@@ -87,8 +131,6 @@ pub struct NativeBackend {
     http: Option<Http>,
     source: Option<Arc<dyn ReleaseSource>>,
     platform: Option<Platform>,
-    /// How this launcher is installed, when it can replace itself.
-    self_install: Option<crate::self_update::Install>,
 }
 
 impl NativeBackend {
@@ -97,7 +139,7 @@ impl NativeBackend {
         let waker: Waker = Arc::new(waker);
         let paths = Paths::new().unwrap_or_else(|e| {
             log::error!("{e}; keeping files in the temporary folder");
-            Paths::under(&std::env::temp_dir().join("suitedock"))
+            Paths::under(&std::env::temp_dir().join("artcraft-launcher"))
         });
         let http = match Http::new() {
             Ok(h) => Some(h),
@@ -114,21 +156,23 @@ impl NativeBackend {
             latest: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
-            job_queue: crate::job_queue::JobQueue::default(),
+            restarting: AtomicBool::new(false),
             manifest: Mutex::new(Manifest::load(&paths.manifest())),
             options: Mutex::new(BackendOptions::default()),
             checking: AtomicBool::new(false),
             detecting: AtomicBool::new(false),
             launcher_release: Mutex::new(None),
+            self_install: OnceLock::new(),
             github_asked: Mutex::new(HashMap::new()),
             answered: Mutex::new(std::collections::HashSet::new()),
             loaded: AtomicBool::new(false),
             feed_failures: Mutex::new(0),
             feed_ok_at: Mutex::new(None),
             feed_throttle: Mutex::new(FeedThrottle::load(&paths.feed_throttle(), crate::now())),
+            pictures_busy: Mutex::new(std::collections::HashSet::new()),
             last_check: Mutex::new(None),
         });
-        let backend = Self { shared, paths, http, source, platform: native_platform(), self_install: crate::self_update::current() };
+        let backend = Self { shared, paths, http, source, platform: native_platform() };
         backend.replay_cache();
         backend.detect_all();
         backend
@@ -167,12 +211,15 @@ impl NativeBackend {
             return;
         }
         let shared = self.shared.clone();
+        let busy = BusyGuard { shared: shared.clone(), flag: BusyFlag::Detecting };
         let paths = self.paths.clone();
         let platform = self.platform;
         let options = self.options();
         std::thread::spawn(move || {
-            // Leftovers from interrupted installs or older versions of the launcher.
-            http::clean_downloads(&paths.downloads(), Duration::from_secs(30 * 86_400));
+            let busy = busy;
+            // Leftovers from interrupted installs or older versions of the launcher. A paused
+            // download stays a month; a finished one kept after a failed install, a week.
+            http::clean_downloads(&paths.downloads(), Duration::from_secs(30 * 86_400), Duration::from_secs(7 * 86_400));
             let snapshot = crate::detect::Snapshot::take();
             let manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).clone();
             for app in &SUITE {
@@ -190,7 +237,7 @@ impl NativeBackend {
             for app in &SUITE {
                 report_partial(app, &shared, &paths, platform, &options);
             }
-            shared.detecting.store(false, Ordering::SeqCst);
+            drop(busy);
         });
     }
 
@@ -214,55 +261,22 @@ impl NativeBackend {
             return;
         }
         let shared = self.shared.clone();
+        let busy = BusyGuard { shared: shared.clone(), flag: BusyFlag::Checking };
         let paths = self.paths.clone();
-        let pre = self.options().prereleases;
+        let platform = self.platform;
+        let options = self.options();
+        let pre = options.prereleases;
+        let mirror = local_mirror();
         std::thread::spawn(move || {
+            let busy = busy;
             shared.emit(Event::CheckStarted);
-            let (feed, fallback) = if pre {
-                // The feed serves stable releases only; with pre-releases on, GitHub decides.
-                (None, Fallback { trust_feed: false, github_every: EARLY_GITHUB_EVERY })
-            } else {
-                feed_and_fallback(&http, &paths, &shared)
-            };
+            let (feed, fallback) = check_plan(&http, mirror.as_ref(), pre, &paths, &shared);
             if let Some(f) = &feed {
                 shared.emit(Event::Notices { announcements: f.announcements.clone(), alerts: f.alerts.clone() });
             }
             let now = crate::now();
             let queue = Mutex::new(SUITE.iter().chain(std::iter::once(&LAUNCHER)).collect::<Vec<&CraftApp>>());
-            let sources = Mutex::new(Vec::new());
-            std::thread::scope(|scope| {
-                for _ in 0..WORKERS {
-                    scope.spawn(|| {
-                        loop {
-                            let Some(app) = queue.lock().unwrap_or_else(PoisonError::into_inner).pop() else { break };
-                            let (latest, from, used) = latest_for(app, feed.as_ref(), fallback, source.as_ref(), &shared, pre, force, now);
-                            if let Some(used) = used {
-                                sources.lock().unwrap_or_else(PoisonError::into_inner).push(used);
-                            }
-                            if app.id == LAUNCHER_ID {
-                                // Is there a newer SuiteDock?
-                                if let Some(LatestRelease::Found(r)) = latest
-                                    && let (Some(newest), Some(current)) = (r.version.as_ref(), crate::self_update::current_version())
-                                    && version::is_newer(newest, &current)
-                                    && !crate::self_update::just_updated_to(&paths, &r)
-                                {
-                                    *shared.launcher_release.lock().unwrap_or_else(PoisonError::into_inner) = Some(r.clone());
-                                    shared.emit(Event::LauncherUpdate(r));
-                                }
-                                continue;
-                            }
-                            let Some(latest) = latest else { continue };
-                            if let LatestRelease::Found(r) = &latest {
-                                shared.latest.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string(), r.clone());
-                            }
-                            if !matches!(latest, LatestRelease::Failed(_)) {
-                                shared.answered.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string());
-                            }
-                            shared.emit(Event::Latest { app: app.id.to_string(), latest, from });
-                        }
-                    });
-                }
-            });
+            let sources = sweep(&queue, &mirror, feed.as_ref(), fallback, &source, &shared, &paths, &options, force, now);
             source.save();
             {
                 let answered = shared.answered.lock().unwrap_or_else(PoisonError::into_inner);
@@ -270,50 +284,57 @@ impl NativeBackend {
                     shared.loaded.store(true, Ordering::SeqCst);
                 }
             }
-            let sources = sources.into_inner().unwrap_or_else(PoisonError::into_inner);
-            let source_used = if sources.contains(&Source::Cache) {
-                Source::Cache
-            } else if sources.contains(&Source::GitHubPages) {
-                Source::GitHubPages
-            } else if sources.contains(&Source::GitHubApi) {
-                Source::GitHubApi
-            } else {
-                Source::Feed
-            };
+            // A newer release changes which file an install would use.
+            let options = shared.options.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            for app in &SUITE {
+                report_partial(app, &shared, &paths, platform, &options);
+            }
+            let source_used = source_used_of(&sources);
             let at = crate::now();
             *shared.last_check.lock().unwrap_or_else(PoisonError::into_inner) = Some(at);
-            shared.checking.store(false, Ordering::SeqCst);
-            shared.emit(Event::CheckFinished { at, source: source_used, rate_limited_until: source.rate_limited_until() });
+            let rate_limited_until = limit_notice(source_used, source.rate_limited_until());
+            drop(busy);
+            shared.emit(Event::CheckFinished { at, source: source_used, rate_limited_until });
         });
     }
 
-    fn start_job(&self, app_id: &str, uninstall: bool) {
+    fn start_job(&self, app_id: &str, work: Work) {
+        let uninstall = work == Work::Uninstall;
         let Some(app) = CraftApp::by_id(app_id) else { return };
+        log::info!("{}: starting {} job", app.name, if uninstall { "uninstall" } else { "install/update" });
         let stop = Arc::new(Stop::default());
-        let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-        if jobs.contains_key(app.id) {
+        let restarting = {
+            let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+            if jobs.contains_key(app.id) {
+                return;
+            }
+            let restarting = self.shared.restarting.load(Ordering::SeqCst);
+            if !restarting {
+                jobs.insert(app.id.to_string(), stop.clone());
+            }
+            restarting
+        };
+        if restarting {
+            let result = Err("ArtCraft Launcher is restarting to finish its update. Try again once it's back.".into());
+            self.shared.emit(Event::JobFinished { app: app.id.to_string(), result });
             return;
         }
-        if jobs.contains_key(LAUNCHER_ID) {
-            self.shared.emit(Event::JobFinished { app: app.id.to_string(), result: Err("Wait for SuiteDock to finish updating first.".into()) });
-            return;
-        }
-        jobs.insert(app.id.to_string(), stop.clone());
-        self.shared.emit(Event::Progress { app: app.id.to_string(), phase: JobPhase::Queued });
         let shared = self.shared.clone();
+        let job = JobGuard { shared: shared.clone(), app_id: app.id.to_string() };
         let paths = self.paths.clone();
         let http = self.http.clone();
         let platform = self.platform;
         let options = self.options();
-        self.shared.job_queue.push(app.id, move || {
+        let source = self.source.clone();
+        std::thread::spawn(move || {
+            let job = job;
             let existing = shared.installed.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned();
             let record = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).apps.get(app.id).cloned();
-            let result = if let Err(error) = stop.check() {
-                Err(error)
-            } else if uninstall {
+            let result = if uninstall {
                 shared.emit(Event::Progress { app: app.id.to_string(), phase: JobPhase::Removing });
+                let mut phase = |phase| shared.emit(Event::Progress { app: app.id.to_string(), phase });
                 match &existing {
-                    Some(inst) => install::uninstall(app, inst, record.as_ref()).map(|()| {
+                    Some(inst) => install::uninstall(app, inst, record.as_ref(), &paths, &stop, &mut phase).map(|()| {
                         let mut m = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
                         if m.apps.remove(app.id).is_some() {
                             let _ = m.save(&paths.manifest());
@@ -323,7 +344,19 @@ impl NativeBackend {
                     None => Err(format!("{} isn't installed", app.name)),
                 }
             } else {
-                let r = run_install(app, &shared, &paths, http.as_ref(), platform, &options, existing.as_ref(), record.as_ref(), &stop);
+                let r = run_install(
+                    app,
+                    &shared,
+                    &paths,
+                    http.as_ref(),
+                    platform,
+                    &options,
+                    existing.as_ref(),
+                    record.as_ref(),
+                    &stop,
+                    work == Work::Replace,
+                    source.as_deref(),
+                );
                 // Stopped by the connection rather than by the user: say so, and how to go on.
                 match r {
                     Err(e) if e == PAUSED && stop.check().is_ok() => {
@@ -336,6 +369,17 @@ impl NativeBackend {
             // Look again: the result is whatever is on disk now.
             let manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).clone();
             let found = crate::detect::detect(app, &manifest, &crate::detect::Snapshot::take());
+            // One installer call can cover several apps, and fail after some of them went in.
+            let latest = shared.latest.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned();
+            let result = match (result, latest) {
+                (Err(e), Some(release))
+                    if !uninstall && release.version.as_ref().is_some_and(|v| landed_despite(&e, existing.as_ref(), found.as_ref(), v)) =>
+                {
+                    log::warn!("{}: {e}; the new version is installed all the same", app.id);
+                    Ok(installed_text(app, existing.is_some(), &release))
+                }
+                (result, _) => result,
+            };
             {
                 let mut map = shared.installed.lock().unwrap_or_else(PoisonError::into_inner);
                 match &found {
@@ -344,8 +388,7 @@ impl NativeBackend {
                 };
             }
             shared.emit(Event::Detected { app: app.id.to_string(), installed: found });
-            let mut jobs = shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-            jobs.remove(app.id);
+            drop(job);
             shared.emit(Event::JobFinished { app: app.id.to_string(), result });
         });
     }
@@ -353,10 +396,10 @@ impl NativeBackend {
     /// Downloads the newer launcher, puts it in place and asks the UI to quit so it can start.
     fn update_launcher(&self) {
         let id = LAUNCHER_ID.to_string();
-        let (Some(install), Some(platform)) = (self.self_install.clone(), self.platform) else {
+        let (Some(install), Some(platform)) = (self.shared.self_install.get().cloned().flatten(), self.platform) else {
             self.shared.emit(Event::JobFinished {
                 app: id,
-                result: Err("this copy of SuiteDock can't update itself; download the new version instead".into()),
+                result: Err("this copy of ArtCraft Launcher can't update itself; download the new version instead".into()),
             });
             return;
         };
@@ -367,15 +410,12 @@ impl NativeBackend {
             if jobs.contains_key(&id) {
                 return;
             }
-            if !jobs.is_empty() {
-                self.shared
-                    .emit(Event::JobFinished { app: id, result: Err("Finish or cancel the queued app updates before updating SuiteDock.".into()) });
-                return;
-            }
             jobs.insert(id.clone(), stop.clone());
         }
+        let job = JobGuard { shared: self.shared.clone(), app_id: id.clone() };
         let (shared, paths, http) = (self.shared.clone(), self.paths.clone(), self.http.clone());
         std::thread::spawn(move || {
+            let job = job;
             let mut last_emit = Instant::now() - Duration::from_secs(1);
             let mut phase = |p: JobPhase| {
                 if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50)
@@ -385,14 +425,21 @@ impl NativeBackend {
                 last_emit = Instant::now();
                 shared.emit(Event::Progress { app: LAUNCHER_ID.to_string(), phase: p });
             };
+            let last = || {
+                let mut waiting = || shared.emit(Event::Progress { app: LAUNCHER_ID.to_string(), phase: JobPhase::Waiting });
+                claim_restart(&shared.jobs, &shared.restarting, &stop, RESTART_WAIT, &mut waiting)
+            };
             let result = match http.as_ref() {
-                Some(http) => crate::self_update::update(&install, &release, platform, http, &paths, &stop, &mut phase),
+                Some(http) => crate::self_update::update(&install, &release, platform, http, &paths, &stop, &mut phase, &last),
                 None => Err("secure connections aren't available on this system".into()),
             };
-            shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).remove(LAUNCHER_ID);
+            drop(job);
             match result {
                 Ok(()) => shared.emit(Event::LauncherRestarting),
-                Err(e) => shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) }),
+                Err(e) => {
+                    shared.restarting.store(false, Ordering::SeqCst);
+                    shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) });
+                }
             }
         });
     }
@@ -400,6 +447,48 @@ impl NativeBackend {
     fn installed(&self, app: &str) -> Option<Installed> {
         self.shared.installed.lock().unwrap_or_else(PoisonError::into_inner).get(app).cloned()
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Work {
+    Install,
+    Replace,
+    Uninstall,
+}
+
+fn release_matches_track(release: &Release, track: &VersionTrack, prereleases: bool) -> bool {
+    match track {
+        VersionTrack::Stable => prereleases || (!release.prerelease && release.version.as_ref().is_some_and(version::is_stable)),
+        VersionTrack::Nightly => artcraft_launcher_core::release::is_nightly(release),
+        VersionTrack::Pinned(tag) => &release.tag == tag,
+    }
+}
+
+/// Whether `chosen` is a version picked by name that is older than the installed copy.
+fn is_chosen_downgrade(track: &VersionTrack, chosen: &Release, existing: Option<&Installed>) -> bool {
+    let VersionTrack::Pinned(tag) = track else { return false };
+    let (Some(chosen_v), Some(installed_v)) = (chosen.version.as_ref(), existing.and_then(|i| i.version.as_ref())) else { return false };
+    chosen.tag == *tag && version::is_newer(installed_v, chosen_v)
+}
+
+/// For a version chosen by name that is older than the installed copy: the installed version's own
+/// published release, to put back if the downgrade fails. `None` for anything else, without
+/// asking `list`. An error means the downgrade can't be made safe, so it must not start.
+fn downgrade_previous(
+    app: &CraftApp,
+    track: &VersionTrack,
+    chosen: &Release,
+    existing: Option<&Installed>,
+    list: impl FnOnce() -> Result<Vec<Release>, String>,
+) -> Result<Option<Release>, String> {
+    let Some(installed_v) = existing.and_then(|i| i.version.as_ref()).filter(|_| is_chosen_downgrade(track, chosen, existing)) else {
+        return Ok(None);
+    };
+    let releases =
+        list().map_err(|e| format!("couldn't find {} {installed_v} to put back if going back fails ({e}), so nothing was changed.", app.name))?;
+    releases.into_iter().find(|r| r.version.as_ref() == Some(installed_v)).map(Some).ok_or_else(|| {
+        format!("{} {installed_v} isn't published any more, so it couldn't be put back if going back fails. Nothing was changed.", app.name)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -413,6 +502,8 @@ fn run_install(
     existing: Option<&Installed>,
     record: Option<&crate::manifest::Record>,
     stop: &Stop,
+    replace: bool,
+    source: Option<&dyn ReleaseSource>,
 ) -> Result<String, String> {
     if let Some(msg) = existing.and_then(|e| install::managed_elsewhere(app, e, false)) {
         return Err(msg);
@@ -425,9 +516,53 @@ fn run_install(
         .unwrap_or_else(PoisonError::into_inner)
         .get(app.id)
         .cloned()
-        .ok_or("the latest release hasn't been found yet. Check for updates first.")?;
-    let (asset, kind) = planned_asset(app, &release, platform, options, existing, record)
-        .ok_or_else(|| format!("{} {} has no download for {}", app.name, release.version_label(), platform.label()))?;
+        .ok_or("the selected release hasn't been found yet. Check for updates first.")?;
+    let track = options.versions.get(app.id).unwrap_or(&VersionTrack::Stable);
+    if !release_matches_track(&release, track, options.prereleases) {
+        return Err("the selected version isn't available yet. Check for updates before installing.".into());
+    }
+    let (asset, kind) = planned_asset(app, &release, platform, options, existing, record).ok_or_else(|| {
+        if platform.os == artcraft_launcher_core::Os::Linux
+            && options.install_locations.folder(app.id).is_some()
+            && existing.is_none()
+            && record.is_none()
+        {
+            "this release has no AppImage for a custom install folder".to_string()
+        } else {
+            format!("{} {} has no download for {}", app.name, release.version_label(), platform.label())
+        }
+    })?;
+    // Going back to a version chosen by name. A macOS bundle keeps the old copy aside until the
+    // new one is in place. Otherwise the installed version's own package is found first, so a
+    // downgrade that fails can put it back. Without it nothing changes.
+    let keeps_old_copy = install::keeps_old_copy(kind, existing);
+    let previous = if keeps_old_copy {
+        None
+    } else {
+        downgrade_previous(app, track, &release, existing, || {
+            source
+                .ok_or_else(|| "secure connections aren't available on this system".to_string())?
+                .versions(&feed_repo(load_feed(paths).as_ref(), app))
+        })?
+    };
+    let previous_asset = match &previous {
+        Some(p) => Some(
+            planned_asset(app, p, platform, options, existing, record)
+                .filter(|(_, k)| *k == kind)
+                .map(|(a, _)| a)
+                .ok_or_else(|| format!("{} {} has no matching download to put back, so nothing was changed.", app.name, p.version_label()))?,
+        ),
+        None => None,
+    };
+    let downgrade = if keeps_old_copy {
+        is_chosen_downgrade(track, &release, existing).then_some(install::Downgrade::KeepOldCopy)
+    } else {
+        previous.as_ref().zip(previous_asset.as_ref()).map(|(previous, asset)| install::Downgrade::Reinstall { previous, asset })
+    };
+    if !replace && let Some(path) = install::occupied(app, &asset, kind, existing, record, &options.install_locations, paths)? {
+        shared.emit(Event::Occupied { app: app.id.to_string(), path: path.display().to_string() });
+        return Err(format!("{} already exists", path.display()));
+    }
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut phase = |p: JobPhase| {
         // Downloads report thousands of times; the UI needs ~20 a second.
@@ -437,8 +572,16 @@ fn run_install(
         last_emit = Instant::now();
         shared.emit(Event::Progress { app: app.id.to_string(), phase: p });
     };
-    let mut job = Job { http, paths, stop, phase: &mut phase };
-    let (new_record, verified) = install::install(app, &release, &asset, kind, existing, &mut job)?;
+    let mut job = Job { http, paths, stop, phase: &mut phase, install_locations: &options.install_locations, replace, downgrade };
+    let mut commit_record = |record: &crate::manifest::Record| {
+        let mut manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut updated = manifest.clone();
+        updated.apps.insert(app.id.to_string(), record.clone());
+        updated.save(&paths.manifest())?;
+        *manifest = updated;
+        Ok(())
+    };
+    let new_record = install::install_at(app, &release, &asset, kind, existing, record, &mut job, Some(&mut commit_record))?;
     {
         let mut m = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
         let changed = match new_record {
@@ -453,12 +596,76 @@ fn run_install(
             log::warn!("couldn't save the install record: {e}");
         }
     }
-    let verb = if existing.is_some() { "updated to" } else { "installed:" };
-    let note = match verified {
-        http::Verified::Checksum => "",
-        http::Verified::SizeOnly => " (this release publishes no checksum, so only its size was checked)",
+    Ok(installed_text(app, existing.is_some(), &release))
+}
+
+/// What a finished install tells the user.
+fn installed_text(app: &CraftApp, update: bool, release: &Release) -> String {
+    let verb = if update { "updated to" } else { "installed:" };
+    format!("{} {verb} {}", app.name, release.version_label())
+}
+
+/// Whether an install whose job failed with `error` went in all the same. Only a failed call
+/// shared by several apps (Linux packages installed together) can have installed some of them;
+/// any other error, a cancellation or a pause stands, whatever is found afterwards.
+fn landed_despite(error: &str, before: Option<&Installed>, after: Option<&Installed>, latest: &version::Version) -> bool {
+    error != PAUSED && error != CANCELLED && error != INSTALL_CANCELLED && install::failed_in_shared_call(error) && landed(before, after, latest)
+}
+
+/// Whether an install took, whatever its job reported: `latest` is there now and wasn't before.
+fn landed(before: Option<&Installed>, after: Option<&Installed>, latest: &version::Version) -> bool {
+    let has_latest = |copy: Option<&Installed>| copy.and_then(|i| i.version.as_ref()).is_some_and(|v| !version::is_update(latest, v));
+    has_latest(after) && !has_latest(before)
+}
+
+/// For the launcher's own update, before it replaces itself: waits (saying so through `waiting`)
+/// until every other job has ended, then sets `restarting`, which keeps new jobs from starting.
+/// The restart that follows would otherwise cut their installs short. The user can cancel the
+/// wait (`stop`); after `limit` it gives up and names the apps still busy, since one may be
+/// stuck behind a password prompt nobody has answered.
+fn claim_restart(
+    jobs: &Mutex<HashMap<String, Arc<Stop>>>,
+    restarting: &AtomicBool,
+    stop: &Stop,
+    limit: Duration,
+    waiting: &mut dyn FnMut(),
+) -> Result<(), String> {
+    let started = Instant::now();
+    let mut told = false;
+    loop {
+        stop.check()?;
+        let busy: Vec<&'static str> = {
+            let jobs = jobs.lock().unwrap_or_else(PoisonError::into_inner);
+            let busy = jobs.keys().filter(|id| *id != LAUNCHER_ID).map(|id| CraftApp::by_id(id).map_or("another app", |a| a.name)).collect();
+            if jobs.keys().all(|id| id == LAUNCHER_ID) {
+                restarting.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            busy
+        };
+        if started.elapsed() >= limit {
+            return Err(restart_blocked(busy));
+        }
+        if !told {
+            told = true;
+            waiting();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Why the launcher didn't restart: `busy` apps were still installing, and what to do about it.
+fn restart_blocked(mut busy: Vec<&str>) -> String {
+    busy.sort_unstable();
+    busy.dedup();
+    let (names, were, them) = match busy.as_slice() {
+        [one] => ((*one).to_string(), "was", "it"),
+        _ => (busy.join(", "), "were", "them"),
     };
-    Ok(format!("{} {verb} {}{note}", app.name, release.version_label()))
+    format!(
+        "ArtCraft Launcher didn't restart to update: {names} {were} still installing. Answer or close any password prompt, \
+         let {them} finish or cancel {them}, then press Update and restart again."
+    )
 }
 
 /// The file an install of `app` would download now: same format as the installed copy, else
@@ -472,24 +679,139 @@ fn planned_asset(
     record: Option<&crate::manifest::Record>,
 ) -> Option<(Asset, PackageKind)> {
     let stems: Vec<&str> = app.stems().collect();
-    let kinds = install::choose_kinds(existing, record, &options.kinds);
+    let custom_linux = platform.os == artcraft_launcher_core::Os::Linux
+        && !process::in_sandbox()
+        && existing.is_none()
+        && record.is_none()
+        && options.install_locations.folder(app.id).is_some();
+    let kinds = if existing.is_none() && record.is_some_and(|r| r.kind == PackageKind::PortableZip) {
+        vec![PackageKind::PortableZip]
+    } else if custom_linux {
+        vec![artcraft_launcher_core::PackageKind::AppImage]
+    } else {
+        install::choose_kinds(app, existing, record, &options.kinds)
+    };
     pick_asset(release, &stems, platform, &kinds).map(|(a, k)| (a.clone(), k))
 }
 
-/// Tells the UI whether `app` has a paused download waiting.
+/// Tells the UI whether `app` has a paused download waiting, or a finished one to install.
 fn report_partial(app: &CraftApp, shared: &Shared, paths: &Paths, platform: Option<Platform>, options: &BackendOptions) {
-    let download = partial_for(app, shared, paths, platform, options).map(|(asset, done)| PausedDownload { done, total: asset.size });
+    let planned = planned_download(app, shared, paths, platform, options);
+    let download = planned.as_ref().and_then(|(dest, size)| Some(PausedDownload { done: http::partial_bytes(dest, *size)?, total: *size }));
     shared.emit(Event::Paused { app: app.id.to_string(), download });
+    let ready = planned.is_some_and(|(dest, size)| http::finished(&dest, size));
+    shared.emit(Event::ReadyToInstall { app: app.id.to_string(), ready });
 }
 
-/// The planned download of `app` and how many bytes of it are already on disk.
-fn partial_for(app: &CraftApp, shared: &Shared, paths: &Paths, platform: Option<Platform>, options: &BackendOptions) -> Option<(Asset, u64)> {
+/// Where the planned download of `app` is kept, and its size.
+fn planned_download(
+    app: &CraftApp,
+    shared: &Shared,
+    paths: &Paths,
+    platform: Option<Platform>,
+    options: &BackendOptions,
+) -> Option<(std::path::PathBuf, u64)> {
     let release = shared.latest.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned()?;
     let existing = shared.installed.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned();
     let record = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).apps.get(app.id).cloned();
     let (asset, _) = planned_asset(app, &release, platform?, options, existing.as_ref(), record.as_ref())?;
-    let done = http::partial_bytes(&install::download_path(paths, &asset), asset.size)?;
-    Some((asset, done))
+    artcraft_launcher_core::release::valid_file_name(&asset.name).then(|| (install::download_path(paths, &asset), asset.size))
+}
+
+/// What one check asks: which feed to poll (a local mirror trumps everything), and how much to
+/// lean on GitHub.
+fn check_plan(http: &Http, mirror: Option<&String>, pre: bool, paths: &Paths, shared: &Arc<Shared>) -> (Option<Feed>, Fallback) {
+    if let Some(base) = mirror {
+        // A local mirror answers for everything: GitHub is never asked.
+        (local_feed(http, base), Fallback { trust_feed: true, github_every: GITHUB_FALLBACK_EVERY })
+    } else if pre {
+        // The feed serves stable releases only; with pre-releases on, GitHub decides.
+        (None, Fallback { trust_feed: false, github_every: EARLY_GITHUB_EVERY })
+    } else {
+        feed_and_fallback(http, paths, shared)
+    }
+}
+
+/// Answers the apps from a shared queue over a few workers, and returns which sources answered.
+#[allow(clippy::too_many_arguments)]
+fn sweep(
+    queue: &Mutex<Vec<&'static CraftApp>>,
+    mirror: &Option<String>,
+    feed: Option<&Feed>,
+    fallback: Fallback,
+    source: &Arc<dyn ReleaseSource>,
+    shared: &Arc<Shared>,
+    paths: &Paths,
+    options: &BackendOptions,
+    force: bool,
+    now: i64,
+) -> Vec<Source> {
+    let sources = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| {
+                loop {
+                    let Some(app) = queue.lock().unwrap_or_else(PoisonError::into_inner).pop() else { break };
+                    let track =
+                        if app.id == LAUNCHER_ID { &options.launcher_version } else { options.versions.get(app.id).unwrap_or(&VersionTrack::Stable) };
+                    let (latest, from, used) = match mirror {
+                        Some(_) => mirror_chosen(app, feed, now, track),
+                        None if *track != VersionTrack::Stable => {
+                            let answer = source.chosen(&feed_repo(feed, app), track);
+                            (Some(answer.latest), Origin::GitHub, Some(answer.source))
+                        }
+                        None => latest_for(app, feed, fallback, source.as_ref(), shared, options.prereleases, force, now),
+                    };
+                    if let Some(used) = used {
+                        sources.lock().unwrap_or_else(PoisonError::into_inner).push(used);
+                    }
+                    check_app(app, latest, from, shared, paths);
+                }
+            });
+        }
+    });
+    sources.into_inner().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Publishes one app's answer to the shared state, or handles the launcher's own update check
+/// first (it doesn't appear in the grid, so it has no card of its own to publish to).
+fn check_app(app: &'static CraftApp, latest: Option<LatestRelease>, from: Origin, shared: &Arc<Shared>, paths: &Paths) {
+    if app.id == LAUNCHER_ID {
+        launcher_update(paths, latest, shared);
+        return;
+    }
+    let Some(latest) = latest else { return };
+    if let LatestRelease::Found(r) = &latest {
+        shared.latest.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string(), r.clone());
+    }
+    if !matches!(latest, LatestRelease::Failed(_)) {
+        shared.answered.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string());
+    }
+    shared.emit(Event::Latest { app: app.id.to_string(), latest, from });
+}
+
+/// Offers the launcher's own update when its answer is a newer release than the running one.
+fn launcher_update(paths: &Paths, latest: Option<LatestRelease>, shared: &Arc<Shared>) {
+    let Some(LatestRelease::Found(r)) = latest else { return };
+    let (Some(newest), Some(current)) = (r.version.as_ref(), crate::self_update::current_version()) else { return };
+    if version::is_newer(newest, &current) && !crate::self_update::just_updated_to(paths, &r) {
+        shared.self_install.get_or_init(crate::self_update::current);
+        *shared.launcher_release.lock().unwrap_or_else(PoisonError::into_inner) = Some(r.clone());
+        shared.emit(Event::LauncherUpdate(r));
+    }
+}
+
+/// The weakest source that answered this check; it sets the wording of the "checked with" line.
+fn source_used_of(sources: &[Source]) -> Source {
+    if sources.contains(&Source::Cache) {
+        Source::Cache
+    } else if sources.contains(&Source::GitHubPages) {
+        Source::GitHubPages
+    } else if sources.contains(&Source::GitHubApi) {
+        Source::GitHubApi
+    } else {
+        Source::Feed
+    }
 }
 
 /// How much the feed is trusted in one check, and how freely GitHub may be asked.
@@ -561,14 +883,17 @@ fn latest_for(
     force: bool,
     now: i64,
 ) -> (Option<LatestRelease>, Origin, Option<Source>) {
-    if app.id != LAUNCHER_ID && fallback.trust_feed {
+    let repo = feed_repo(feed, app);
+    if fallback.trust_feed {
         match feed.map(|f| f.answer(app, now)) {
-            Some(FeedAnswer::Fresh(Some(r))) => return (Some(LatestRelease::Found(r)), Origin::ArtCraftApi, Some(Source::Feed)),
-            Some(FeedAnswer::Fresh(None)) => return (Some(LatestRelease::None), Origin::ArtCraftApi, Some(Source::Feed)),
-            Some(FeedAnswer::AskGitHub) | None => {}
+            // The feed can lag GitHub by some minutes after a release. A check the user pressed
+            // looks past it when GitHub's quota-free redirect names something newer (#91).
+            Some(FeedAnswer::Fresh(found)) if !(force && feed_is_behind(source, &repo, found.as_ref())) => {
+                return (Some(found.map_or(LatestRelease::None, LatestRelease::Found)), Origin::ArtCraftApi, Some(Source::Feed));
+            }
+            Some(FeedAnswer::Fresh(_) | FeedAnswer::AskGitHub) | None => {}
         }
     }
-    let repo = feed_repo(feed, app);
     let due = {
         let mut asked = shared.github_asked.lock().unwrap_or_else(PoisonError::into_inner);
         let due = force || asked.get(app.id).is_none_or(|t| now - t >= fallback.github_every);
@@ -585,9 +910,26 @@ fn latest_for(
     }
 }
 
+/// Whether GitHub names a newer stable release of `repo` than the feed's `latest` (`None`: the
+/// feed says there is none). `false` whenever the redirect can't be read: the feed then stands.
+fn feed_is_behind(source: &dyn ReleaseSource, repo: &str, latest: Option<&Release>) -> bool {
+    let Some(newest) = source.newest_tag(repo).and_then(|tag| version::parse(&tag)) else { return false };
+    match latest.and_then(|r| r.version.as_ref()) {
+        Some(feed) => version::is_newer(&newest, feed),
+        None => true,
+    }
+}
+
+/// Until when the footer says GitHub's limit holds details back: only while it does, that is
+/// when this check had to settle for the release pages or saved answers. When the feed (or the
+/// API itself) answered everything, nothing is missing, however recently GitHub said no.
+fn limit_notice(source_used: Source, limited_until: Option<i64>) -> Option<i64> {
+    limited_until.filter(|_| matches!(source_used, Source::GitHubPages | Source::Cache))
+}
+
 /// The repo to ask GitHub about, following the feed's repo renames.
 fn feed_repo(feed: Option<&Feed>, app: &CraftApp) -> String {
-    if app.id == LAUNCHER_ID { app.repo.to_string() } else { feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app)) }
+    feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app))
 }
 
 /// What came of asking the feed during one check.
@@ -654,13 +996,81 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
     if asked { FeedFetch::Failed } else { FeedFetch::Held }
 }
 
-/// The feed's address. `SUITEDOCK_FEED_URL` points at a staging server or a local copy
+/// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at a staging server or a local copy
 /// (only `https://`, or plain `http://` on localhost).
 fn feed_url() -> String {
-    std::env::var("SUITEDOCK_FEED_URL")
+    std::env::var("ARTCRAFT_LAUNCHER_FEED_URL")
         .ok()
-        .filter(|u| u.starts_with("https://") || u.starts_with("http://127.0.0.1:") || u.starts_with("http://localhost:"))
-        .unwrap_or_else(|| suitedock_core::feed::FEED_URL.to_string())
+        .filter(|u| feed_url_override_allowed(u, cfg!(feature = "local-mirror")))
+        .unwrap_or_else(|| artcraft_launcher_core::feed::FEED_URL.to_string())
+}
+
+fn feed_url_override_allowed(url: &str, allow_https: bool) -> bool {
+    is_loopback(url) || (allow_https && url.starts_with("https://"))
+}
+
+use crate::http::is_loopback;
+
+/// `ARTCRAFT_LAUNCHER_DOWNLOAD_BASE`: a mirror on this machine (`cargo xtask local serve`) that
+/// serves `release_info.json` and the builds it lists. While it's set, releases come only from
+/// there (never GitHub or ArtCraft's API), and its download links are trusted. Loopback only, so
+/// nothing but the developer's own builds can be installed this way, and only in builds with the
+/// `local-mirror` feature: release builds ignore the variable.
+fn local_mirror() -> Option<String> {
+    if !cfg!(feature = "local-mirror") {
+        return None;
+    }
+    let base = std::env::var("ARTCRAFT_LAUNCHER_DOWNLOAD_BASE").ok()?;
+    let base = base.trim();
+    if !is_loopback(base) || base.contains(['?', '#', '\\']) {
+        log::warn!(
+            "ignoring ARTCRAFT_LAUNCHER_DOWNLOAD_BASE={base}: only http://127.0.0.1:<port>/, http://localhost:<port>/ or http://[::1]:<port>/"
+        );
+        return None;
+    }
+    Some(if base.ends_with('/') { base.to_string() } else { format!("{base}/") })
+}
+
+/// The local mirror's feed: `ARTCRAFT_LAUNCHER_FEED_URL` if set, else `release_info.json` beside
+/// the builds. Asked every check (it's on this machine), and never saved over ArtCraft's.
+fn local_feed(http: &Http, base: &str) -> Option<Feed> {
+    let url = std::env::var("ARTCRAFT_LAUNCHER_FEED_URL").ok().filter(|u| is_loopback(u)).unwrap_or_else(|| format!("{base}release_info.json"));
+    match http.get_feed(&url) {
+        Ok(body) => {
+            let feed = Feed::parse(&body).map(|f| f.with_mirror(base));
+            if feed.is_none() {
+                log::warn!("the local mirror's feed at {url} is unreadable");
+            }
+            feed
+        }
+        Err(e) => {
+            log::warn!("local mirror unavailable: {} (is `cargo xtask local serve` running?)", e.why);
+            None
+        }
+    }
+}
+
+/// `app`'s latest release according to the local mirror. An app it doesn't list has no release.
+fn mirror_latest(app: &CraftApp, feed: Option<&Feed>, now: i64) -> (Option<LatestRelease>, Origin, Option<Source>) {
+    let latest = match feed.map(|f| f.answer(app, now)) {
+        Some(FeedAnswer::Fresh(Some(r))) => LatestRelease::Found(r),
+        Some(FeedAnswer::Fresh(None) | FeedAnswer::AskGitHub) => LatestRelease::None,
+        None => LatestRelease::Failed("the local mirror didn't answer".into()),
+    };
+    (Some(latest), Origin::ArtCraftApi, Some(Source::Feed))
+}
+
+/// A selected track never silently falls back to the mirror's stable release.
+fn mirror_chosen(app: &CraftApp, feed: Option<&Feed>, now: i64, track: &VersionTrack) -> (Option<LatestRelease>, Origin, Option<Source>) {
+    let (answer, origin, source) = mirror_latest(app, feed, now);
+    let chosen = match (track, answer) {
+        (VersionTrack::Stable, answer) => answer,
+        (VersionTrack::Nightly, Some(LatestRelease::Found(r))) if artcraft_launcher_core::release::is_nightly(&r) => Some(LatestRelease::Found(r)),
+        (VersionTrack::Pinned(tag), Some(LatestRelease::Found(r))) if &r.tag == tag => Some(LatestRelease::Found(r)),
+        (_, Some(LatestRelease::Failed(why))) => Some(LatestRelease::Failed(why)),
+        _ => Some(LatestRelease::None),
+    };
+    (chosen, origin, source)
 }
 
 /// The last saved feed answer, if any.
@@ -683,46 +1093,79 @@ fn native_platform() -> Option<Platform> {
     Some(p)
 }
 
+/// Clears an app's "pictures on their way" mark when the thread fetching them ends, panic or not.
+struct PicturesBusy {
+    shared: Arc<Shared>,
+    app: &'static str,
+}
+
+impl Drop for PicturesBusy {
+    fn drop(&mut self) {
+        self.shared.pictures_busy.lock().unwrap_or_else(PoisonError::into_inner).remove(self.app);
+    }
+}
+
+impl NativeBackend {
+    /// Starts fetching the pictures of an app's details page, unless they are already on their way.
+    /// An app without a page, or a name that isn't an app, is ignored.
+    fn fetch_screenshots(&self, app: &str) {
+        let Some(details) = artcraft_launcher_core::details::AppDetails::by_id(app) else { return };
+        if !self.shared.pictures_busy.lock().unwrap_or_else(PoisonError::into_inner).insert(details.id) {
+            return;
+        }
+        let (shared, http, paths) = (self.shared.clone(), self.http.clone(), self.paths.clone());
+        std::thread::spawn(move || {
+            let _busy = PicturesBusy { shared: shared.clone(), app: details.id };
+            crate::screenshots::fetch_all(http.as_ref(), &paths, details, |key, result| {
+                shared.emit(Event::Screenshot { app: details.id.to_string(), key: key.to_string(), result });
+            });
+        });
+    }
+}
+
 impl Backend for NativeBackend {
     fn send(&mut self, command: Command) {
         match command {
             Command::CheckForUpdates { force } => self.check(force),
             Command::Detect => self.detect_all(),
-            Command::Install { app } => self.start_job(&app, false),
-            Command::Uninstall { app } => self.start_job(&app, true),
+            Command::ListVersions { app } => {
+                let Some(def) = (if app == LAUNCHER_ID { Some(&LAUNCHER) } else { CraftApp::by_id(&app) }) else { return };
+                let source = self.source.clone();
+                let shared = self.shared.clone();
+                let repo = feed_repo(load_feed(&self.paths).as_ref(), def);
+                std::thread::spawn(move || {
+                    let result = source.ok_or("secure connections aren't available on this system".to_string()).and_then(|s| s.versions(&repo));
+                    shared.emit(Event::Versions { app, result });
+                });
+            }
+            Command::Install { app } => self.start_job(&app, Work::Install),
+            Command::Replace { app } => self.start_job(&app, Work::Replace),
+            Command::Uninstall { app } => self.start_job(&app, Work::Uninstall),
             Command::Pause { app } => {
                 if let Some(stop) = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).get(&app) {
                     stop.pause();
                 }
             }
             Command::Cancel { app } => {
-                let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-                if self.shared.job_queue.cancel(&app) {
-                    if let Some(stop) = jobs.remove(&app) {
-                        stop.cancel();
-                    }
-                    self.shared.emit(Event::JobFinished { app, result: Err(CANCELLED.into()) });
-                    return;
-                }
-                let running = jobs.get(&app).cloned();
-                drop(jobs);
+                let running = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).get(&app).cloned();
                 match running {
                     Some(stop) => stop.cancel(),
-                    // A paused download: throw its partial file away.
+                    // A paused download, or one kept after a failed install: throw the file away.
                     None => {
                         if let Some(def) = CraftApp::by_id(&app)
-                            && let Some((asset, _)) = partial_for(def, &self.shared, &self.paths, self.platform, &self.options())
+                            && let Some((dest, size)) = planned_download(def, &self.shared, &self.paths, self.platform, &self.options())
                         {
-                            http::discard_partial(&install::download_path(&self.paths, &asset), asset.size);
+                            http::discard(&dest, size);
                         }
-                        self.shared.emit(Event::Paused { app, download: None });
+                        self.shared.emit(Event::Paused { app: app.clone(), download: None });
+                        self.shared.emit(Event::ReadyToInstall { app, ready: false });
                     }
                 }
             }
             Command::Launch { app } => {
                 let Some(def) = CraftApp::by_id(&app) else { return };
                 let result = match self.installed(&app) {
-                    Some(inst) => install::launch(def, &inst),
+                    Some(inst) => install::launch(def, &inst, &self.paths),
                     None => Err(format!("{} isn't installed", def.name)),
                 };
                 if let Err(e) = result {
@@ -739,13 +1182,20 @@ impl Backend for NativeBackend {
                 }
             }
             Command::UpdateLauncher => self.update_launcher(),
+            Command::FetchScreenshots { app } => self.fetch_screenshots(&app),
             Command::Configure(options) => {
                 let changed_pre = {
                     let mut o = self.shared.options.lock().unwrap_or_else(PoisonError::into_inner);
-                    let changed = o.prereleases != options.prereleases;
+                    let changed =
+                        o.prereleases != options.prereleases || o.versions != options.versions || o.launcher_version != options.launcher_version;
                     *o = options;
                     changed
                 };
+                // Another package format means another file to download.
+                let options = self.options();
+                for app in &SUITE {
+                    report_partial(app, &self.shared, &self.paths, self.platform, &options);
+                }
                 if changed_pre {
                     self.check(true);
                 }
@@ -763,7 +1213,7 @@ impl Backend for NativeBackend {
             Some(Os::Windows) => "Show in Explorer",
             _ => "Show in Files",
         };
-        Capabilities { manage_apps: true, reveal_label, self_update: self.self_install.is_some() }
+        Capabilities { manage_apps: true, reveal_label, self_update: self.shared.self_install.get().is_some_and(Option::is_some) }
     }
 
     fn platform(&self) -> Option<Platform> {
@@ -775,23 +1225,122 @@ impl Backend for NativeBackend {
     }
 }
 
-/// The launcher's own download for this machine, for "a new launcher is available".
-pub fn launcher_download(release: &Release, platform: Platform) -> Option<String> {
-    let kinds: &[suitedock_core::PackageKind] = match platform.os {
-        Os::Linux => &[suitedock_core::PackageKind::AppImage, suitedock_core::PackageKind::Deb],
-        _ => platform.default_kinds(),
-    };
-    pick_asset(release, &[LAUNCHER_ID], platform, kinds).map(|(a, _)| a.url.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
 
-    use suitedock_core::protocol::LatestRelease;
+    use artcraft_launcher_core::InstallSource;
+
+    use artcraft_launcher_core::protocol::LatestRelease;
 
     use super::*;
+
     use crate::source::Answer;
+
+    fn tagged(v: &str) -> Release {
+        Release { tag: format!("v{v}"), version: version::parse(v), ..Default::default() }
+    }
+
+    #[test]
+    fn a_downgrade_is_only_a_version_chosen_by_name_below_the_installed_one() {
+        let installed = Installed { version: version::parse("0.14.0"), source: InstallSource::MacApp, location: String::new(), package: None };
+        let pinned = VersionTrack::Pinned("v0.13.0".into());
+        assert!(is_chosen_downgrade(&pinned, &tagged("0.13.0"), Some(&installed)));
+        assert!(!is_chosen_downgrade(&VersionTrack::Stable, &tagged("0.13.0"), Some(&installed)));
+        assert!(!is_chosen_downgrade(&VersionTrack::Pinned("v0.15.0".into()), &tagged("0.15.0"), Some(&installed)));
+        assert!(!is_chosen_downgrade(&pinned, &tagged("0.12.0"), Some(&installed)));
+        assert!(!is_chosen_downgrade(&pinned, &tagged("0.13.0"), None));
+    }
+
+    #[test]
+    fn only_a_version_chosen_by_name_below_the_installed_one_looks_for_a_package_to_put_back() {
+        let app = CraftApp::by_id("filmcraft").unwrap();
+        let installed = Installed { version: version::parse("0.14.0"), source: InstallSource::Msi, location: String::new(), package: None };
+        let pinned = VersionTrack::Pinned("v0.13.0".into());
+        let never = || -> Result<Vec<Release>, String> { panic!("no list is needed") };
+        // An update, the latest release, nothing installed, or a stale release: no downgrade.
+        assert_eq!(downgrade_previous(app, &VersionTrack::Stable, &tagged("0.13.0"), Some(&installed), never), Ok(None));
+        assert_eq!(downgrade_previous(app, &VersionTrack::Pinned("v0.15.0".into()), &tagged("0.15.0"), Some(&installed), never), Ok(None));
+        assert_eq!(downgrade_previous(app, &pinned, &tagged("0.13.0"), None, never), Ok(None));
+        assert_eq!(downgrade_previous(app, &pinned, &tagged("0.12.0"), Some(&installed), never), Ok(None));
+        // Going back finds the installed version's own release.
+        let found = downgrade_previous(app, &pinned, &tagged("0.13.0"), Some(&installed), || Ok(vec![tagged("0.14.0"), tagged("0.13.0")]));
+        assert_eq!(found.unwrap().map(|r| r.tag), Some("v0.14.0".to_string()));
+        // Without it, or without the list, the downgrade doesn't start.
+        let gone = downgrade_previous(app, &pinned, &tagged("0.13.0"), Some(&installed), || Ok(vec![tagged("0.13.0")])).unwrap_err();
+        assert!(gone.contains("FilmCraft 0.14.0 isn't published any more") && gone.contains("Nothing was changed"), "{gone}");
+        let offline = downgrade_previous(app, &pinned, &tagged("0.13.0"), Some(&installed), || Err("offline".into())).unwrap_err();
+        assert!(offline.contains("(offline)") && offline.contains("nothing was changed"), "{offline}");
+    }
+
+    /// Going back is a conscious choice: a check for a pinned app reports the pinned release, so
+    /// a newer one never shows as an update (badge, Update all, notification or automatic install).
+    #[test]
+    fn a_pinned_app_is_never_offered_a_newer_release() {
+        struct Published;
+        impl ReleaseSource for Published {
+            fn latest(&self, repo: &str, _prereleases: bool) -> crate::source::Answer {
+                let found = CraftApp::by_id(APP).is_some_and(|a| a.repo == repo);
+                let latest = if found { LatestRelease::Found(tagged("0.6.0")) } else { LatestRelease::None };
+                crate::source::Answer { latest, source: Source::GitHubApi }
+            }
+            fn versions(&self, _repo: &str) -> Result<Vec<Release>, String> {
+                Ok(vec![tagged("0.6.0"), tagged("0.5.0")])
+            }
+            fn cached(&self, _repo: &str, _prereleases: bool) -> Option<LatestRelease> {
+                None
+            }
+            fn rate_limited_until(&self) -> Option<i64> {
+                None
+            }
+            fn save(&self) {}
+        }
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, Some(Arc::new(Published)));
+        backend.http = Some(Http::new().unwrap());
+        {
+            let mut options = backend.shared.options.lock().unwrap();
+            options.prereleases = true; // asks the source directly, never ArtCraft's API
+            options.versions.insert(APP.to_string(), VersionTrack::Pinned("v0.5.0".into()));
+        }
+        backend.send(Command::CheckForUpdates { force: true });
+        let mut events = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !events.iter().any(|e| matches!(e, Event::CheckFinished { .. })) {
+            assert!(Instant::now() < deadline, "the check never finished");
+            std::thread::sleep(Duration::from_millis(10));
+            events.extend(backend.poll());
+        }
+        let answered = events.iter().rev().find_map(|e| match e {
+            Event::Latest { app, latest: LatestRelease::Found(r), .. } if app == APP => Some(r.tag.clone()),
+            _ => None,
+        });
+        assert_eq!(answered.as_deref(), Some("v0.5.0"), "the pinned release, not the newer one");
+    }
+
+    #[test]
+    fn an_install_cannot_use_a_stale_release_from_a_different_track() {
+        let mut release = Release { tag: "v0.8.0".into(), version: version::parse("v0.8.0"), ..Default::default() };
+        assert!(!release_matches_track(&release, &VersionTrack::Nightly, false));
+        assert!(!release_matches_track(&release, &VersionTrack::Pinned("v0.7.0".into()), false));
+        assert!(release_matches_track(&release, &VersionTrack::Stable, false));
+        release.tag = "v0.9.0-nightly.20261028".into();
+        release.version = version::parse(&release.tag);
+        release.prerelease = true;
+        assert!(release_matches_track(&release, &VersionTrack::Nightly, false));
+        assert!(!release_matches_track(&release, &VersionTrack::Stable, false));
+    }
+
+    #[test]
+    fn feed_url_overrides_are_loopback_only_outside_local_mirror_builds() {
+        assert!(feed_url_override_allowed("http://127.0.0.1:8787/release_info.json", false));
+        assert!(feed_url_override_allowed("http://localhost:8787/release_info.json", false));
+        assert!(!feed_url_override_allowed("https://staging.example/release_info.json", false));
+        assert!(feed_url_override_allowed("https://staging.example/release_info.json", true));
+        assert!(!feed_url_override_allowed("http://attacker.example/release_info.json", true));
+    }
 
     /// GitHub, counting how often it's asked.
     #[derive(Default)]
@@ -818,109 +1367,22 @@ mod tests {
             latest: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
-            job_queue: crate::job_queue::JobQueue::default(),
+            restarting: AtomicBool::new(false),
             manifest: Mutex::new(Manifest::default()),
             options: Mutex::new(BackendOptions::default()),
             checking: AtomicBool::new(false),
             detecting: AtomicBool::new(false),
             last_check: Mutex::new(None),
             launcher_release: Mutex::new(None),
+            self_install: OnceLock::new(),
             github_asked: Mutex::new(HashMap::new()),
             answered: Mutex::new(std::collections::HashSet::new()),
             loaded: AtomicBool::new(false),
             feed_failures: Mutex::new(0),
             feed_ok_at: Mutex::new(None),
             feed_throttle: Mutex::new(FeedThrottle::new()),
+            pictures_busy: Mutex::new(std::collections::HashSet::new()),
         }
-    }
-
-    #[test]
-    fn a_paused_or_failed_update_does_not_block_the_next_app() {
-        use std::sync::mpsc;
-        let (wake, awakened) = mpsc::channel();
-        let mut state = shared();
-        state.waker = Arc::new(move || {
-            let _ = wake.send(());
-        });
-        let state = Arc::new(state);
-        let dir = tempfile::tempdir().unwrap();
-        let mut backend =
-            NativeBackend { shared: state.clone(), paths: Paths::under(dir.path()), http: None, source: None, platform: None, self_install: None };
-        let (started, ready) = mpsc::channel();
-        let (release, wait) = mpsc::channel();
-        state.job_queue.push("running installer", move || {
-            started.send(()).unwrap();
-            wait.recv_timeout(Duration::from_secs(10)).unwrap();
-        });
-        ready.recv_timeout(Duration::from_secs(10)).unwrap();
-        for app in ["photocraft", "effectcraft", "vectorcraft"] {
-            backend.send(Command::Install { app: app.into() });
-        }
-        backend.send(Command::Pause { app: "photocraft".into() });
-        release.send(()).unwrap();
-        let mut finished = Vec::new();
-        while finished.len() < 3 {
-            awakened.recv_timeout(Duration::from_secs(10)).unwrap();
-            for event in backend.poll() {
-                if let Event::JobFinished { app, result } = event {
-                    finished.push((app, result));
-                }
-            }
-        }
-        assert_eq!(finished[0], ("photocraft".into(), Err(PAUSED.into())));
-        assert_eq!(finished[1].0, "effectcraft");
-        assert_eq!(finished[2].0, "vectorcraft");
-        assert!(finished[1].1.is_err() && finished[2].1.is_err());
-        assert!(state.jobs.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn queued_updates_are_deduplicated_and_cancelled_before_they_start() {
-        use std::sync::mpsc;
-        let state = Arc::new(shared());
-        let dir = tempfile::tempdir().unwrap();
-        let mut backend =
-            NativeBackend { shared: state.clone(), paths: Paths::under(dir.path()), http: None, source: None, platform: None, self_install: None };
-        let (started, ready) = mpsc::channel();
-        let (release, wait) = mpsc::channel();
-        state.job_queue.push("running installer", move || {
-            started.send(()).unwrap();
-            wait.recv_timeout(Duration::from_secs(5)).unwrap();
-        });
-        ready.recv_timeout(Duration::from_secs(5)).unwrap();
-        backend.send(Command::Install { app: "photocraft".into() });
-        backend.send(Command::Install { app: "photocraft".into() });
-        backend.send(Command::Install { app: "effectcraft".into() });
-        let events = backend.poll();
-        assert_eq!(events.len(), 2);
-        assert!(events.iter().all(|event| matches!(event, Event::Progress { phase: JobPhase::Queued, .. })));
-        assert_eq!(state.jobs.lock().unwrap().len(), 2);
-        backend.send(Command::Cancel { app: "photocraft".into() });
-        assert_eq!(backend.poll(), vec![Event::JobFinished { app: "photocraft".into(), result: Err(CANCELLED.into()) }]);
-        assert!(!state.jobs.lock().unwrap().contains_key("photocraft"));
-        assert!(state.jobs.lock().unwrap().contains_key("effectcraft"));
-        backend.send(Command::Cancel { app: "effectcraft".into() });
-        assert!(state.jobs.lock().unwrap().is_empty());
-        release.send(()).unwrap();
-    }
-
-    #[test]
-    fn launcher_updates_ignore_upstream_feed_and_repository_renames() {
-        let feed = Feed::parse(
-            r#"{"release_info":{"apps":{"suitedock":{"latest_release":null,"app_last_fetched":"2099-01-01T00:00:00Z"}}},
-                "repo_renames":[{"old_repo":"ripDZL/craft-launcher","new_repo":"storytold/craft-launcher"}]}"#,
-        )
-        .unwrap();
-        assert!(matches!(feed.answer(&LAUNCHER, crate::now()), FeedAnswer::Fresh(None)));
-        assert_eq!(feed_repo(Some(&feed), &LAUNCHER), "ripDZL/craft-launcher");
-        let github = CountingGitHub::default();
-        let state = shared();
-        let (latest, origin, used) =
-            latest_for(&LAUNCHER, Some(&feed), Fallback { trust_feed: true, github_every: 3600 }, &github, &state, false, true, crate::now());
-        assert!(matches!(latest, Some(LatestRelease::None)));
-        assert_eq!(origin, Origin::GitHub);
-        assert_eq!(used, Some(Source::GitHubApi));
-        assert_eq!(github.0.load(Ordering::SeqCst), 1);
     }
 
     /// A local server answering every request with `status` (and `Retry-After: 120` on a 429),
@@ -990,6 +1452,18 @@ mod tests {
     }
 
     #[test]
+    fn the_limit_notice_shows_only_while_details_are_missing() {
+        let until = Some(NOW + 31 * 60);
+        // GitHub said no earlier, but the feed has since answered every app: nothing to warn about.
+        assert_eq!(limit_notice(Source::Feed, until), None);
+        assert_eq!(limit_notice(Source::GitHubApi, until), None);
+        // Some apps came from the release pages or saved answers: say when the rest returns.
+        assert_eq!(limit_notice(Source::GitHubPages, until), until);
+        assert_eq!(limit_notice(Source::Cache, until), until);
+        assert_eq!(limit_notice(Source::Cache, None), None);
+    }
+
+    #[test]
     fn the_first_poll_tries_once_and_falls_back_at_once() {
         // Nothing has ever loaded and the feed didn't answer: GitHub, freely.
         let f = decide_fallback(false, false, true, 1, None, NOW);
@@ -1017,6 +1491,25 @@ mod tests {
         // Several checks in a row and an hour without an answer: GitHub takes over, hourly.
         let f = decide_fallback(false, true, false, SERIOUS_FEED_FAILURES, Some(NOW - SERIOUS_FEED_OUTAGE), NOW);
         assert_eq!(f, Fallback { trust_feed: false, github_every: GITHUB_FALLBACK_EVERY });
+    }
+
+    #[test]
+    fn a_local_mirror_answers_for_every_app_on_its_own() {
+        let photo = CraftApp::by_id("photocraft").unwrap();
+        let word = CraftApp::by_id("wordcraft").unwrap();
+        let feed = feed().with_mirror("http://127.0.0.1:8787/");
+        // Listed: found, even long after the sync.
+        let (latest, _, _) = mirror_latest(photo, Some(&feed), NOW + 30 * 86_400);
+        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0"));
+        // Not listed: no release (rather than asking GitHub).
+        assert!(matches!(mirror_latest(word, Some(&feed), NOW).0, Some(LatestRelease::None)));
+        // Not running: says so.
+        assert!(matches!(mirror_latest(photo, None, NOW).0, Some(LatestRelease::Failed(_))));
+        assert!(is_loopback("http://localhost:8787/") && is_loopback("http://[::1]:8787/"));
+        assert!(!is_loopback("http://192.168.1.2:8787/") && !is_loopback("http://localhost.evil.example/"));
+        assert!(!is_loopback("http://127.0.0.1:1@evil.example/") && !is_loopback("http://127.0.0.1:8787@evil.example:80/"));
+        assert!(!is_loopback("http://127.0.0.1/") && !is_loopback("http://127.0.0.1:x/") && !is_loopback("https://127.0.0.1:8787/"));
+        assert!(is_loopback("http://127.0.0.1:8787") && is_loopback("http://127.0.0.1:8787/release_info.json"));
     }
 
     #[test]
@@ -1056,5 +1549,413 @@ mod tests {
         let fresh_shared = super::tests::shared();
         let (_, _, used) = latest_for(photo, Some(&feed), LOADED, &github, &fresh_shared, false, false, NOW + 2 * 86_400);
         assert_eq!(used, Some(Source::GitHubApi));
+    }
+
+    /// Refresh looks past a feed that is behind GitHub (#91).
+    #[test]
+    fn refresh_asks_github_when_its_redirect_names_a_newer_release_than_the_feed() {
+        /// GitHub, whose quota-free redirect names `newest`.
+        struct Ahead {
+            newest: Option<&'static str>,
+            asked: AtomicUsize,
+        }
+        impl ReleaseSource for Ahead {
+            fn latest(&self, _repo: &str, _pre: bool) -> Answer {
+                self.asked.fetch_add(1, Ordering::SeqCst);
+                let found = Release { tag: "v0.7.0".into(), version: version::parse("0.7.0"), ..Release::default() };
+                Answer { latest: LatestRelease::Found(found), source: Source::GitHubApi }
+            }
+            fn cached(&self, _repo: &str, _pre: bool) -> Option<LatestRelease> {
+                None
+            }
+            fn rate_limited_until(&self) -> Option<i64> {
+                None
+            }
+            fn save(&self) {}
+            fn newest_tag(&self, _repo: &str) -> Option<String> {
+                self.newest.map(str::to_string)
+            }
+        }
+        let photo = CraftApp::by_id("photocraft").unwrap();
+        let feed = feed(); // vouches for PhotoCraft v0.6.0
+        let github = |newest| Ahead { newest, asked: AtomicUsize::new(0) };
+
+        // GitHub names the release the feed has: Refresh takes the feed's answer, asking nothing more.
+        let same = github(Some("v0.6.0"));
+        let (latest, _, used) = latest_for(photo, Some(&feed), LOADED, &same, &shared(), false, true, NOW);
+        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0"));
+        assert_eq!((used, same.asked.load(Ordering::SeqCst)), (Some(Source::Feed), 0));
+
+        // GitHub names a newer one: Refresh asks GitHub for it.
+        let ahead = github(Some("v0.7.0"));
+        let (latest, _, used) = latest_for(photo, Some(&feed), LOADED, &ahead, &shared(), false, true, NOW);
+        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.7.0"), "{latest:?}");
+        assert_eq!((used, ahead.asked.load(Ordering::SeqCst)), (Some(Source::GitHubApi), 1));
+
+        // An automatic check never probes: the feed stands, as does a Refresh when the redirect
+        // can't be read, or names something older.
+        let (_, _, used) = latest_for(photo, Some(&feed), LOADED, &ahead, &shared(), false, false, NOW);
+        assert_eq!((used, ahead.asked.load(Ordering::SeqCst)), (Some(Source::Feed), 1));
+        for newest in [None, Some("v0.5.9"), Some("not a version")] {
+            let github = github(newest);
+            let (_, _, used) = latest_for(photo, Some(&feed), LOADED, &github, &shared(), false, true, NOW);
+            assert_eq!((used, github.asked.load(Ordering::SeqCst)), (Some(Source::Feed), 0), "{newest:?}");
+        }
+    }
+
+    const APP: &str = "photocraft";
+
+    /// A PhotoCraft release with one file per platform and format, so whichever this machine
+    /// installs is there.
+    fn release(version: &str) -> Release {
+        let suffixes = ["-portable.zip", ".tar.gz", ".msi", ".dmg", ".AppImage", ".deb", ".rpm", ".flatpak"];
+        let tokens = [
+            "windows-x64",
+            "windows-x86",
+            "windows-arm64",
+            "macos-universal",
+            "linux-x86_64",
+            "linux-aarch64",
+            "linux-riscv64",
+            "freebsd-x86_64",
+            "freebsd-aarch64",
+        ];
+        let assets = tokens
+            .iter()
+            .flat_map(|t| suffixes.iter().map(move |s| format!("{APP}-{version}-{t}{s}")))
+            .map(|name| Asset { url: format!("https://example.invalid/{name}"), name, size: 3, sha256: None })
+            .collect();
+        Release { assets, ..Release::default() }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_preference_selects_portable_and_existing_installs_keep_their_format() {
+        let app = CraftApp::by_id(APP).unwrap();
+        let platform = Platform { os: Os::Windows, arch: Arch::X64 };
+        let release = release("0.5.0");
+        let portable_options = BackendOptions { kinds: vec![PackageKind::PortableZip], ..Default::default() };
+        assert_eq!(planned_asset(app, &release, platform, &portable_options, None, None).unwrap().1, PackageKind::PortableZip);
+        let msi = Installed {
+            version: None,
+            source: artcraft_launcher_core::InstallSource::Msi,
+            location: r"C:\Apps\PhotoCraft\photocraft.exe".into(),
+            package: None,
+        };
+        assert_eq!(planned_asset(app, &release, platform, &portable_options, Some(&msi), None).unwrap().1, PackageKind::Msi);
+        let launcher = Installed {
+            version: None,
+            source: artcraft_launcher_core::InstallSource::Launcher,
+            location: r"D:\Craft Apps\PhotoCraft\photocraft.exe".into(),
+            package: None,
+        };
+        let record = crate::manifest::Record {
+            version: "0.4.0".into(),
+            kind: PackageKind::PortableZip,
+            path: launcher.location.clone().into(),
+            installed_at: 1,
+            files: vec![],
+            needs_root: false,
+        };
+        let msi_options = BackendOptions { kinds: vec![PackageKind::Msi], ..Default::default() };
+        assert_eq!(planned_asset(app, &release, platform, &msi_options, Some(&launcher), Some(&record)).unwrap().1, PackageKind::PortableZip);
+        assert_eq!(planned_asset(app, &release, platform, &msi_options, None, Some(&record)).unwrap().1, PackageKind::PortableZip);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_custom_linux_folder_requires_appimage_without_package_fallback() {
+        if process::in_sandbox() {
+            return;
+        }
+        let app = CraftApp::by_id(APP).unwrap();
+        let platform = Platform { os: Os::Linux, arch: Arch::X64 };
+        let options = BackendOptions {
+            kinds: vec![PackageKind::Deb],
+            install_locations: artcraft_launcher_core::protocol::InstallLocations { root: Some("/custom/apps".into()), ..Default::default() },
+            ..Default::default()
+        };
+        let mut release = release("0.5.0");
+        assert_eq!(planned_asset(app, &release, platform, &options, None, None).unwrap().1, PackageKind::AppImage);
+        release.assets.retain(|a| !a.name.ends_with(".AppImage"));
+        assert!(planned_asset(app, &release, platform, &options, None, None).is_none());
+        let existing =
+            Installed { version: None, source: artcraft_launcher_core::InstallSource::Deb, location: "/usr/bin/photocraft".into(), package: None };
+        let system = BackendOptions { kinds: options.kinds.clone(), ..Default::default() };
+        assert_eq!(
+            planned_asset(app, &release, platform, &options, Some(&existing), None),
+            planned_asset(app, &release, platform, &system, Some(&existing), None)
+        );
+    }
+
+    /// A backend that knows `release("0.5.0")` and keeps its files under `root`.
+    fn backend(root: &std::path::Path, platform: Platform, source: Option<Arc<dyn ReleaseSource>>) -> NativeBackend {
+        let shared = shared();
+        shared.latest.lock().unwrap().insert(APP.to_string(), release("0.5.0"));
+        let shared = Arc::new(shared);
+        NativeBackend { shared, paths: Paths::under(root), http: None, source, platform: Some(platform) }
+    }
+
+    /// Reports again, and returns what the UI was last told about a kept download.
+    fn ready(backend: &mut NativeBackend) -> Option<bool> {
+        let app = CraftApp::by_id(APP).unwrap();
+        report_partial(app, &backend.shared, &backend.paths, backend.platform, &BackendOptions::default());
+        last_ready(backend.poll())
+    }
+
+    fn last_ready(events: Vec<Event>) -> Option<bool> {
+        events.into_iter().rev().find_map(|e| match e {
+            Event::ReadyToInstall { app, ready } if app == APP => Some(ready),
+            _ => None,
+        })
+    }
+
+    fn wait_until(mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !ready() {
+            assert!(Instant::now() < deadline, "the worker did not finish unwinding");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn panic_on_wake() -> (Waker, mpsc::Receiver<()>) {
+        let (sent, received) = mpsc::channel();
+        (
+            Arc::new(move || {
+                let _ = sent.send(());
+                panic!("injected worker panic")
+            }),
+            received,
+        )
+    }
+
+    #[test]
+    fn a_panicking_detection_worker_releases_its_busy_flag() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        let (waker, woke) = panic_on_wake();
+        Arc::get_mut(&mut backend.shared).unwrap().waker = waker;
+
+        backend.detect_all();
+        woke.recv_timeout(Duration::from_secs(2)).unwrap();
+        wait_until(|| !backend.shared.detecting.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_panicking_check_worker_releases_its_busy_flag() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, Some(Arc::new(CountingGitHub::default())));
+        backend.http = Some(Http::new().unwrap());
+        let (waker, woke) = panic_on_wake();
+        Arc::get_mut(&mut backend.shared).unwrap().waker = waker;
+
+        backend.check(true);
+        woke.recv_timeout(Duration::from_secs(2)).unwrap();
+        wait_until(|| !backend.shared.checking.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_panicking_job_worker_removes_its_busy_entry() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        let (waker, woke) = panic_on_wake();
+        Arc::get_mut(&mut backend.shared).unwrap().waker = waker;
+
+        backend.start_job(APP, Work::Uninstall);
+        woke.recv_timeout(Duration::from_secs(2)).unwrap();
+        wait_until(|| !backend.shared.jobs.lock().unwrap().contains_key(APP));
+    }
+
+    #[test]
+    fn job_finished_is_emitted_after_its_busy_entry_is_removed() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        let shared: Arc<Mutex<Option<std::sync::Weak<Shared>>>> = Arc::new(Mutex::new(None));
+        let shared_for_waker = shared.clone();
+        let (sent, received) = mpsc::channel();
+        Arc::get_mut(&mut backend.shared).unwrap().waker = Arc::new(move || {
+            let Some(shared) = shared_for_waker.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade) else { return };
+            let finished = shared.events.lock().unwrap().iter().any(|event| matches!(event, Event::JobFinished { app, .. } if app == APP));
+            if finished {
+                let busy = shared.jobs.lock().unwrap().contains_key(APP);
+                let _ = sent.send(busy);
+            }
+        });
+        *shared.lock().unwrap() = Some(Arc::downgrade(&backend.shared));
+
+        backend.start_job(APP, Work::Uninstall);
+        assert!(!received.recv_timeout(Duration::from_secs(2)).unwrap());
+    }
+
+    /// Puts the planned download on disk, as a failed install leaves it.
+    fn keep_file(backend: &NativeBackend) -> std::path::PathBuf {
+        let app = CraftApp::by_id(APP).unwrap();
+        let (dest, size) = planned_download(app, &backend.shared, &backend.paths, backend.platform, &BackendOptions::default()).unwrap();
+        std::fs::create_dir_all(backend.paths.downloads()).unwrap();
+        std::fs::write(&dest, vec![0u8; size as usize]).unwrap();
+        dest
+    }
+
+    #[test]
+    fn a_kept_download_is_reported_and_can_be_thrown_away() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        assert_eq!(ready(&mut backend), Some(false));
+        let dest = keep_file(&backend);
+        assert_eq!(ready(&mut backend), Some(true));
+
+        backend.send(Command::Cancel { app: APP.to_string() });
+        assert!(!dest.exists());
+        assert_eq!(last_ready(backend.poll()), Some(false));
+    }
+
+    #[test]
+    fn changing_the_settings_reports_kept_downloads_again() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        keep_file(&backend);
+        assert_eq!(ready(&mut backend), Some(true));
+        // The planned file changed under the UI; only a new report can tell it.
+        backend.shared.latest.lock().unwrap().insert(APP.to_string(), release("0.6.0"));
+        backend.send(Command::Configure(BackendOptions::default()));
+        assert_eq!(last_ready(backend.poll()), Some(false));
+    }
+
+    #[test]
+    fn a_check_that_finds_a_newer_release_ends_the_retry_offer() {
+        struct Newer;
+        impl ReleaseSource for Newer {
+            fn latest(&self, repo: &str, _prereleases: bool) -> crate::source::Answer {
+                let found = CraftApp::by_id(APP).is_some_and(|a| a.repo == repo);
+                let latest = if found { LatestRelease::Found(release("0.6.0")) } else { LatestRelease::None };
+                crate::source::Answer { latest, source: Source::GitHubApi }
+            }
+            fn cached(&self, _repo: &str, _prereleases: bool) -> Option<LatestRelease> {
+                None
+            }
+            fn rate_limited_until(&self) -> Option<i64> {
+                None
+            }
+            fn save(&self) {}
+        }
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, Some(Arc::new(Newer)));
+        // A check needs a client; with pre-releases on it asks only `Newer`, never ArtCraft's API.
+        backend.http = Some(Http::new().unwrap());
+        backend.shared.options.lock().unwrap().prereleases = true;
+        keep_file(&backend);
+        assert_eq!(ready(&mut backend), Some(true));
+
+        backend.send(Command::CheckForUpdates { force: true });
+        let mut events = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !events.iter().any(|e| matches!(e, Event::CheckFinished { .. })) {
+            assert!(Instant::now() < deadline, "the check never finished");
+            std::thread::sleep(Duration::from_millis(10));
+            events.extend(backend.poll());
+        }
+        assert_eq!(last_ready(events), Some(false));
+    }
+
+    fn copy(v: &str) -> Installed {
+        Installed { version: version::parse(v), source: InstallSource::Deb, location: String::new(), package: None }
+    }
+
+    #[test]
+    fn a_failed_job_counts_as_installed_only_when_the_new_version_arrived() {
+        let latest = version::parse("0.5.0").unwrap();
+        // One app of a shared installer call went in before another failed the call.
+        assert!(landed(Some(&copy("0.4.1")), Some(&copy("0.5.0")), &latest));
+        assert!(landed(None, Some(&copy("0.5.0")), &latest));
+        // Nothing changed, so the error stands.
+        assert!(!landed(Some(&copy("0.4.1")), Some(&copy("0.4.1")), &latest));
+        assert!(!landed(None, None, &latest));
+        // It was current before the job ran: the job did not install it.
+        assert!(!landed(Some(&copy("0.5.0")), Some(&copy("0.5.0")), &latest));
+        // A copy whose version can't be read proves nothing.
+        let unreadable = Installed { version: None, ..copy("0.5.0") };
+        assert!(!landed(Some(&copy("0.4.1")), Some(&unreadable), &latest));
+    }
+
+    #[test]
+    fn only_a_failed_shared_call_can_count_as_installed() {
+        let latest = version::parse("0.5.0").unwrap();
+        let (before, after) = (Some(copy("0.4.1")), Some(copy("0.5.0")));
+        let landed_after = |error: &str| landed_despite(error, before.as_ref(), after.as_ref(), &latest);
+        // An app's own failure stands, even if its new version shows up (an MSI or AppImage that
+        // reported an error, a cancelled or dismissed prompt, a pause).
+        for error in ["the Windows Installer stopped with error 1603", "couldn't copy the AppImage", CANCELLED, INSTALL_CANCELLED, PAUSED] {
+            assert!(!landed_after(error), "{error}");
+        }
+        // A call shared with other apps may have installed this one before it failed.
+        let shared = "the system installer stopped with error 100 while handling 2 apps in one go. Try them one at a time.";
+        assert_eq!(landed_after(shared), cfg!(any(target_os = "linux", windows)));
+        assert!(!landed_despite(shared, before.as_ref(), before.as_ref(), &latest));
+    }
+
+    #[test]
+    fn the_launcher_gives_up_waiting_and_names_the_busy_apps() {
+        let jobs = Mutex::new(HashMap::new());
+        for id in [LAUNCHER_ID, "photocraft"] {
+            jobs.lock().unwrap().insert(id.to_string(), Arc::new(Stop::default()));
+        }
+        let restarting = AtomicBool::new(false);
+        let error = claim_restart(&jobs, &restarting, &Stop::default(), Duration::from_millis(300), &mut || {}).unwrap_err();
+        assert!(error.contains("PhotoCraft was still installing") && error.contains("cancel it"), "{error}");
+        assert!(!restarting.load(Ordering::SeqCst));
+        assert!(restart_blocked(vec!["WordCraft", "FilmCraft"]).contains("FilmCraft, WordCraft were still installing"));
+    }
+
+    #[test]
+    fn the_launcher_restarts_only_once_every_other_job_has_ended() {
+        let jobs = Mutex::new(HashMap::new());
+        for id in [LAUNCHER_ID, "photocraft", "filmcraft"] {
+            jobs.lock().unwrap().insert(id.to_string(), Arc::new(Stop::default()));
+        }
+        let restarting = AtomicBool::new(false);
+        let stop = Stop::default();
+        let (waiting, waits) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let (jobs, restarting, stop) = (&jobs, &restarting, &stop);
+            let claim = scope.spawn(move || claim_restart(jobs, restarting, stop, RESTART_WAIT, &mut || waiting.send(()).unwrap()));
+            waits.recv().unwrap();
+            // One install ends; another is still running or queued.
+            jobs.lock().unwrap().remove("photocraft");
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(!claim.is_finished() && !restarting.load(Ordering::SeqCst));
+            jobs.lock().unwrap().remove("filmcraft");
+            assert_eq!(claim.join().unwrap(), Ok(()));
+        });
+        assert!(restarting.load(Ordering::SeqCst));
+        assert!(waits.try_recv().is_err(), "it says it is waiting once");
+
+        // With nothing else running there is nothing to wait for.
+        let restarting = AtomicBool::new(false);
+        assert_eq!(claim_restart(&jobs, &restarting, &stop, RESTART_WAIT, &mut || panic!("it never waits")), Ok(()));
+        assert!(restarting.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_cancelled_launcher_update_stops_waiting_and_claims_nothing() {
+        let jobs =
+            Mutex::new(HashMap::from([(LAUNCHER_ID.to_string(), Arc::new(Stop::default())), ("photocraft".to_string(), Arc::new(Stop::default()))]));
+        let restarting = AtomicBool::new(false);
+        let stop = Stop::default();
+        let (waiting, waits) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let (jobs, restarting, stop) = (&jobs, &restarting, &stop);
+            let claim = scope.spawn(move || claim_restart(jobs, restarting, stop, RESTART_WAIT, &mut || waiting.send(()).unwrap()));
+            waits.recv().unwrap();
+            stop.cancel();
+            assert_eq!(claim.join().unwrap(), Err(CANCELLED.to_string()));
+        });
+        assert!(!restarting.load(Ordering::SeqCst));
     }
 }

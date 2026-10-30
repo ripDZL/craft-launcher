@@ -1,10 +1,12 @@
 //! What the UI knows about each app.
 
-use suitedock_core::platform::{Platform, pick_asset};
-use suitedock_core::protocol::{JobPhase, LatestRelease, PausedDownload};
-use suitedock_core::release::Release;
-use suitedock_core::status::{self, AppStatus, Latest};
-use suitedock_core::{CraftApp, Installed};
+use artcraft_launcher_core::platform::{Platform, pick_asset};
+use artcraft_launcher_core::protocol::{JobPhase, LatestRelease, PausedDownload};
+use artcraft_launcher_core::release::Release;
+use artcraft_launcher_core::status::{self, AppStatus, Latest};
+use artcraft_launcher_core::{CraftApp, Installed};
+
+use crate::i18n::t;
 
 #[derive(Clone, Debug)]
 pub struct AppEntry {
@@ -15,14 +17,16 @@ pub struct AppEntry {
     pub detected: bool,
     pub job: Option<JobPhase>,
     /// The service `latest` came from.
-    pub origin: Option<suitedock_core::protocol::Origin>,
+    pub origin: Option<artcraft_launcher_core::protocol::Origin>,
     /// A download waiting to be resumed.
     pub paused: Option<PausedDownload>,
+    /// A finished download waiting for another try at installing it.
+    pub ready: bool,
 }
 
 impl AppEntry {
     pub fn new(app: &'static CraftApp) -> Self {
-        Self { app, latest: None, installed: None, detected: false, job: None, origin: None, paused: None }
+        Self { app, latest: None, installed: None, detected: false, job: None, origin: None, paused: None, ready: false }
     }
 
     pub fn release(&self) -> Option<&Release> {
@@ -36,7 +40,8 @@ impl AppEntry {
     pub fn has_download(&self, platform: Option<Platform>) -> bool {
         let (Some(r), Some(p)) = (self.release(), platform) else { return false };
         let stems: Vec<&str> = self.app.stems().collect();
-        pick_asset(r, &stems, p, p.download_kinds()).is_some()
+        let kinds: Vec<_> = p.download_kinds().iter().copied().filter(|k| self.app.installs(*k)).collect();
+        pick_asset(r, &stems, p, &kinds).is_some()
     }
 
     pub fn status(&self, platform: Option<Platform>, manage_apps: bool) -> AppStatus {
@@ -53,7 +58,7 @@ impl AppEntry {
     }
 
     pub fn installed_label(&self) -> Option<String> {
-        self.installed.as_ref().map(|i| i.version.as_ref().map_or_else(|| "installed".to_string(), ToString::to_string))
+        self.installed.as_ref().map(|i| i.version.as_ref().map(ToString::to_string).unwrap_or_else(|| t("Installed").to_string()))
     }
 
     pub fn latest_label(&self) -> Option<String> {
@@ -78,28 +83,27 @@ pub enum Tone {
     Faint,
 }
 
-pub fn status_text(status: &AppStatus, manage_apps: bool) -> (&'static str, Tone) {
+pub fn status_text(status: &AppStatus, manage_apps: bool) -> (String, Tone) {
     match status {
-        AppStatus::Checking => ("Checking…", Tone::Faint),
-        AppStatus::Available if manage_apps => ("Available to install", Tone::Info),
-        AppStatus::Available => ("Available", Tone::Info),
-        AppStatus::UpToDate => ("Installed · up to date", Tone::Good),
-        AppStatus::UpdateAvailable => ("Update available", Tone::Warn),
-        AppStatus::Installed => ("Installed", Tone::Neutral),
-        AppStatus::Unavailable => ("Not available here", Tone::Faint),
-        AppStatus::NoRelease => ("Coming soon", Tone::Faint),
+        AppStatus::Checking => (t("Checking…").to_string(), Tone::Faint),
+        AppStatus::Available if manage_apps => (t("Available to install").to_string(), Tone::Info),
+        AppStatus::Available => (t("Available").to_string(), Tone::Info),
+        AppStatus::UpToDate => (t("Installed · up to date").to_string(), Tone::Good),
+        AppStatus::UpdateAvailable => (t("Update available").to_string(), Tone::Warn),
+        AppStatus::Installed => (t("Installed").to_string(), Tone::Neutral),
+        AppStatus::Unavailable => (t("Not available here").to_string(), Tone::Faint),
+        AppStatus::NoRelease => (t("Coming soon").to_string(), Tone::Faint),
     }
 }
 
 /// [`status_text`], but saying so when a download is paused or reconnecting.
-pub fn entry_status_text(e: &AppEntry, status: &AppStatus, manage_apps: bool) -> (&'static str, Tone) {
+pub fn entry_status_text(e: &AppEntry, status: &AppStatus, manage_apps: bool) -> (String, Tone) {
     match (e.job, e.paused) {
-        (Some(JobPhase::Queued), _) => ("Queued", Tone::Neutral),
-        (Some(JobPhase::Reconnecting { .. }), _) => ("Reconnecting…", Tone::Warn),
-        (Some(JobPhase::Downloading { .. }), _) if status.is_installed() => ("Updating…", Tone::Info),
-        (Some(JobPhase::Downloading { .. }), _) => ("Downloading…", Tone::Info),
-        (None, Some(_)) if status.is_installed() => ("Update paused", Tone::Warn),
-        (None, Some(_)) => ("Download paused", Tone::Warn),
+        (Some(JobPhase::Reconnecting { .. }), _) => (t("Reconnecting…").to_string(), Tone::Warn),
+        (Some(JobPhase::Downloading { .. }), _) if status.is_installed() => (t("Updating…").to_string(), Tone::Info),
+        (Some(JobPhase::Downloading { .. }), _) => (t("Downloading…").to_string(), Tone::Info),
+        (None, Some(_)) if status.is_installed() => (t("Update paused").to_string(), Tone::Warn),
+        (None, Some(_)) => (t("Download paused").to_string(), Tone::Warn),
         _ => status_text(status, manage_apps),
     }
 }

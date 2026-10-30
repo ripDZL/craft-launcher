@@ -8,6 +8,8 @@ use egui::epaint::text::VariationCoords;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, Stroke, TextStyle, Visuals};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Lang;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     /// Follow the system's light or dark setting.
@@ -20,11 +22,14 @@ pub enum ThemeChoice {
 impl ThemeChoice {
     pub const ALL: [Self; 3] = [Self::System, Self::Dark, Self::Light];
 
+    /// The English key translated at draw time into the current UI language
+    /// (the shell sets it per frame via `i18n::set_current`). Same-crate lookup,
+    /// pure and wasm-safe; no new dependency. Call sites stay unchanged.
     pub fn label(self) -> &'static str {
         match self {
-            Self::System => "Match system",
-            Self::Dark => "Dark",
-            Self::Light => "Light",
+            Self::System => crate::i18n::t("Match system"),
+            Self::Dark => crate::i18n::t("Dark"),
+            Self::Light => crate::i18n::t("Light"),
         }
     }
 }
@@ -86,7 +91,7 @@ impl Tokens {
         accent_ink: hex(0x74aaff),
         invert_bg: hex(0xffffff),
         invert_fg: hex(0x0b0b0c),
-        // PdfCraft's and LightCraft's inks, so status colours come from the site's palette.
+        // A green and LightCraft's amber from the site's app inks, so status colours come from its palette.
         good: hex(0x3fd6b8),
         warn: hex(0xffc14d),
         bad: hex(0xff6259),
@@ -120,7 +125,7 @@ impl Tokens {
     }
 
     /// An app's text colour (`--app-ink`): readable on this appearance's background.
-    pub fn app_ink(&self, app: &suitedock_core::CraftApp) -> Color32 {
+    pub fn app_ink(&self, app: &artcraft_launcher_core::CraftApp) -> Color32 {
         rgb(if self.dark { app.ink_dark } else { app.ink_light })
     }
 }
@@ -138,6 +143,27 @@ pub fn rgb(c: [u8; 3]) -> Color32 {
 /// The shadow under menus, dialogs and toasts.
 pub fn shadow(t: &Tokens) -> egui::epaint::Shadow {
     egui::epaint::Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(if t.dark { 140 } else { 36 }) }
+}
+
+/// The dim over the page behind a drawer; `amount` runs from 0 (none) to 1.
+pub fn scrim(t: &Tokens, amount: f32) -> Color32 {
+    let alpha = if t.dark { 170.0 } else { 105.0 } * amount.clamp(0.0, 1.0);
+    Color32::from_black_alpha(alpha.round() as u8)
+}
+
+/// Behind an enlarged picture: near-black in both appearances, as pictures are judged on black.
+pub fn backdrop() -> Color32 {
+    Color32::from_black_alpha(232)
+}
+
+/// A frame standing in for a picture, over [`backdrop`].
+pub fn backdrop_panel() -> Color32 {
+    Color32::from_white_alpha(14)
+}
+
+/// Ink on [`backdrop`], at `alpha` out of 255.
+pub fn backdrop_ink(alpha: u8) -> Color32 {
+    Color32::from_white_alpha(alpha)
 }
 
 fn visuals(t: &Tokens) -> Visuals {
@@ -213,6 +239,31 @@ pub const HUD_SPACING: f32 = HUD_SIZE * 0.15;
 /// Buttons: 11 px Geist Mono 700, upper case, 0.12 em apart.
 pub const BUTTON_SPACING: f32 = HUD_SIZE * 0.12;
 
+// ---- layout ------------------------------------------------------------------------------------
+// The app page and the large dialogs (Settings, release notes) share these, so they read as one
+// family; the toolbar and the footer use the same steps.
+
+/// Padding inside the app page and the dialogs, round their headers, bodies and footers.
+pub const PAD: f32 = 24.0;
+/// The gap between the two columns of a page or dialog.
+pub const COLUMN_GAP: f32 = 32.0;
+/// Padding inside a hairline box: a group of settings, a feature, a release fact.
+pub const BOX_MARGIN: egui::Margin = egui::Margin::symmetric(14, 12);
+/// Below this width the toolbar moves the sort and "Update all" to a second row.
+pub const TOOLBAR_COMPACT_BELOW: f32 = 640.0;
+/// From this width the large dialogs read in two columns.
+pub const DIALOG_COLUMNS_FROM: f32 = 760.0;
+/// From this width the app page reads in two columns (its pictures need the room).
+pub const PAGE_COLUMNS_FROM: f32 = 900.0;
+/// Title sizes, largest first: an app page's name, a large dialog's title, a small prompt's title.
+pub const PAGE_TITLE: f32 = 32.0;
+pub const SHEET_TITLE: f32 = 26.0;
+pub const DIALOG_TITLE: f32 = 22.0;
+/// A row of icon links (the footer, Settings): the room round each logo, and the gap between their
+/// targets; neighbours' logos sit `2 × ICON_LINK_PAD + ICON_LINK_GAP` apart.
+pub const ICON_LINK_PAD: f32 = 6.0;
+pub const ICON_LINK_GAP: f32 = 2.0;
+
 /// Inter 500.
 pub fn medium() -> FontFamily {
     FontFamily::Name("medium".into())
@@ -242,12 +293,26 @@ pub fn mono_bold() -> FontFamily {
 type Face<'a> = (&'a str, &'static [u8], &'a [([u8; 4], f32)], FontFamily);
 
 /// Registers the site's three variable fonts, each at the weights (and width) it uses there.
-pub fn install_fonts(ctx: &egui::Context) {
+/// `cjk`: the CJK language to draw, whose system font is added behind everything else, or `None`
+/// for a language that needs no CJK font.
+pub fn install_fonts(ctx: &egui::Context, cjk: Option<Lang>) {
+    ctx.set_fonts(font_definitions(cjk));
+}
+
+/// The font stack both the native and the web app use.
+///
+/// It starts from egui's `default_fonts` and enables `monochrome_emoji_fonts` at the workspace
+/// level, so arbitrary release-note, feed and alert text keeps the monochrome emoji coverage 0.36
+/// provided on every target, web included. The fixed gear and refresh controls stay painter-drawn
+/// [`crate::widgets::Glyph`]s rather than font glyphs. The one optional extra is a system CJK face,
+/// added only when the desktop selected a CJK language; neither a CJK face nor a system-font
+/// provider is bundled.
+fn font_definitions(cjk: Option<Lang>) -> FontDefinitions {
     const INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter-Variable.ttf");
     const ARCHIVO: &[u8] = include_bytes!("../../../assets/fonts/Archivo-Variable.ttf");
     const GEIST_MONO: &[u8] = include_bytes!("../../../assets/fonts/GeistMono-Variable.ttf");
     let mut fonts = FontDefinitions::default();
-    // egui's own fonts stay behind ours, for symbols and emoji ours don't have.
+    // egui's own Latin faces and the small monochrome icon face stay behind ours.
     let fallback: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let faces: [Face<'_>; 7] = [
         ("Inter", INTER, &[(*b"wght", 400.0), (*b"opsz", 14.0)], FontFamily::Proportional),
@@ -259,11 +324,181 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("GeistMono-Bold", GEIST_MONO, &[(*b"wght", 700.0)], mono_bold()),
     ];
     for (name, bytes, coords, family) in faces {
-        let tweak = FontTweak { coords: VariationCoords::new(coords.iter().copied()), ..Default::default() };
+        // No subpixel binning: these fonts carry no hinting instructions, so a glyph drawn at a
+        // fractional x smears each stem across two pixels, leaving small text blurry at 100 %.
+        let tweak = FontTweak { coords: VariationCoords::new(coords.iter().copied()), subpixel_binning: Some(false), ..Default::default() };
         fonts.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes).tweak(tweak)));
         let mut stack = vec![name.to_owned()];
         stack.extend(fallback.iter().cloned());
         fonts.families.insert(family, stack);
     }
-    ctx.set_fonts(fonts);
+    // The CJK face, behind everything else, from the system: only when asked for, as the font is
+    // large.
+    if let Some(lang) = cjk
+        && let Some(font) = cjk_font(lang)
+    {
+        fonts.font_data.insert("CJK".to_owned(), font);
+        for stack in fonts.families.values_mut() {
+            stack.push("CJK".to_owned());
+        }
+    }
+    fonts
+}
+
+/// The system's font for a CJK language, read once per language (tens of MB). Desktop only: the
+/// web build has none, so CJK text can't be drawn there.
+pub fn cjk_font(lang: Lang) -> Option<Arc<FontData>> {
+    #[cfg(test)]
+    {
+        let overridden = CJK_FONT_OVERRIDE.with(|slot| slot.borrow().as_ref().and_then(|overrides| overrides.get(lang.code()).cloned()));
+        if let Some(font) = overridden {
+            return font;
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        CJK_FONTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(lang.code()).or_insert_with(|| load_cjk(lang)).clone()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = lang;
+        None
+    }
+}
+
+/// Loads the system font for the CJK language `lang`: the face for its script, or `None` where the
+/// system has none. Nothing falls back to another script's face — a face for a different script
+/// leaves its characters as tofu — so a language without its font stays in English, like any other.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_cjk(lang: Lang) -> Option<Arc<FontData>> {
+    crate::cjk_font::load(lang.script()?).map(Arc::new)
+}
+
+/// The system fonts looked for so far, by language code.
+#[cfg(not(target_arch = "wasm32"))]
+static CJK_FONTS: std::sync::Mutex<std::collections::BTreeMap<&str, Option<Arc<FontData>>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[cfg(test)]
+type CjkFontOverrides = std::collections::BTreeMap<&'static str, Option<Arc<FontData>>>;
+
+// Test-only per-thread answer for cjk_font, scoped by CjkFontOverride.
+#[cfg(test)]
+thread_local! {
+    static CJK_FONT_OVERRIDE: std::cell::RefCell<Option<CjkFontOverrides>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Scopes a test-only answer for [`cjk_font`], restoring the previous answer on drop.
+#[cfg(test)]
+pub(crate) struct CjkFontOverride {
+    previous: Option<CjkFontOverrides>,
+}
+
+#[cfg(test)]
+impl CjkFontOverride {
+    /// The system has a face for `lang`: a real bundled face with no CJK glyphs stands in, so a
+    /// test can prove the font gate installed a face without faking CJK coverage or depending on
+    /// the machine.
+    pub(crate) fn available(lang: Lang) -> Self {
+        const INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter-Variable.ttf");
+        Self::install(lang, Some(Arc::new(FontData::from_static(INTER))))
+    }
+
+    /// The system has no face for `lang`.
+    pub(crate) fn unavailable(lang: Lang) -> Self {
+        Self::install(lang, None)
+    }
+
+    fn install(lang: Lang, font: Option<Arc<FontData>>) -> Self {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert(lang.code(), font);
+        let previous = CJK_FONT_OVERRIDE.with(|slot| slot.borrow_mut().replace(overrides));
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CjkFontOverride {
+    fn drop(&mut self) {
+        CJK_FONT_OVERRIDE.with(|slot| *slot.borrow_mut() = self.previous.take());
+    }
+}
+
+/// Has the system font for `lang` already been loaded? Never loads it.
+pub fn cjk_font_loaded(lang: Lang) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        CJK_FONTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(lang.code()).is_some_and(Option::is_some)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = lang;
+        false
+    }
+}
+
+/// Can the CJK language `lang` be drawn? Loads the system font on the first call ([`cjk_font`]).
+pub fn cjk_font_available(lang: Lang) -> bool {
+    cjk_font(lang).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The app's bundled font set is deliberate and bounded: our three families, egui's Latin
+    /// fallbacks, its small monochrome icon face and the two attributed monochrome emoji faces.
+    /// The same function is used by the desktop and web builds, so this upper bound holds for both.
+    #[test]
+    fn production_fonts_are_latin_plus_attributed_monochrome_fallbacks() {
+        let fonts = font_definitions(None);
+        for expected in ["Inter", "Inter-Medium", "Inter-SemiBold", "Archivo-Display", "GeistMono", "GeistMono-Medium", "GeistMono-Bold"] {
+            assert!(fonts.font_data.contains_key(expected), "missing bundled face {expected}: {:?}", fonts.font_data.keys().collect::<Vec<_>>());
+        }
+        for fallback in ["Ubuntu-Light", "Hack", "egui-icons", "NotoEmoji-Regular", "emoji-icon-font"] {
+            assert!(fonts.font_data.contains_key(fallback), "missing egui fallback {fallback}");
+        }
+        assert_eq!(fonts.font_data.len(), 12, "unexpected extra faces: {:?}", fonts.font_data.keys().collect::<Vec<_>>());
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace, medium(), semibold(), display(), mono(), mono_bold()] {
+            let stack = fonts.families.get(&family).unwrap_or_else(|| panic!("family {family:?} missing"));
+            assert_eq!(
+                stack.last().map(String::as_str),
+                Some("emoji-icon-font"),
+                "{family:?} must end at the bundled monochrome emoji fallback, without system fonts: {stack:?}"
+            );
+        }
+    }
+
+    /// Arbitrary network text must not depend on a system font: release notes, feed notices and
+    /// alerts can contain emoji. This is a strict fixture over representative dynamic text, not
+    /// just the fixed controls (whose gear/refresh glyphs are painter-drawn). It also pins the
+    /// bundled font-data upper bound, so a stray system face cannot make coverage pass.
+    #[test]
+    fn bundled_font_stack_covers_representative_dynamic_release_and_feed_text() {
+        use egui::{FontFamily, FontId};
+        const DYNAMIC_TEXT: &str = concat!(
+            "What's Changed: Faster exports 🚀 and fewer bugs 🐛 — New templates 🎨, ",
+            "warnings ⚠ and a celebration 🎉 — ArtCraft news: ✨ ✅ ❌ 💡 🔒"
+        );
+        let fonts = font_definitions(None);
+        assert_eq!(
+            fonts.font_data.len(),
+            12,
+            "the coverage test is only meaningful for the bundled stack: {:?}",
+            fonts.font_data.keys().collect::<Vec<_>>()
+        );
+        let ctx = egui::Context::default();
+        install_fonts(&ctx, None);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for family in [FontFamily::Proportional, FontFamily::Monospace, medium(), semibold(), display(), mono(), mono_bold()] {
+            ctx.fonts_mut(|fonts| {
+                assert!(
+                    fonts.has_glyphs(&FontId::new(14.0, family.clone()), DYNAMIC_TEXT),
+                    "{family:?} lacks a glyph in the representative dynamic notes/feed fixture"
+                );
+            });
+        }
+    }
 }

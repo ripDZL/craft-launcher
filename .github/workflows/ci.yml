@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, beta]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -27,7 +27,7 @@ jobs:
         # are kept for release builds, and release.yml builds and checks macOS.
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # egui/winit/wgpu headers. The tray (ksni) and notifications (notify-rust over zbus) are
       # pure-Rust D-Bus clients, so no GTK, appindicator, xdo or libdbus packages are needed.
@@ -38,11 +38,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Format
         if: runner.os == 'Linux'
@@ -54,66 +54,27 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
-      - name: Windows shortcut and renderer checks
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          ./packaging/render-icons.ps1
-          ./packaging/windows/check-icons.ps1
-
-      - name: Build Windows portable launcher
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
-          SUITEDOCK_REQUIRE_WINRES: '1'
-          SUITEDOCK_BUILD_SHA: ${{ github.sha }}
-        run: |
-          cargo build --release --locked -p suitedock --target x86_64-pc-windows-msvc
-          if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
-          $version = cargo xtask version
-          if ($LASTEXITCODE -ne 0) { throw 'Version lookup failed' }
-          $stage = Join-Path $env:RUNNER_TEMP 'suitedock-portable'
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/suitedock.exe $stage
-          Copy-Item packaging/windows/portable.txt $stage
-          Copy-Item LICENSE-MIT, LICENSE-APACHE, NOTICE, ATTRIBUTION.md $stage
-          New-Item -ItemType Directory -Force -Path "$stage/font-licenses" | Out-Null
-          Copy-Item assets/fonts/OFL-*.txt "$stage/font-licenses"
-          New-Item -ItemType Directory -Force -Path dist/ci | Out-Null
-          $zip = "dist/ci/suitedock-$version-windows-x64-portable.zip"
-          Compress-Archive -Path "$stage/*" -DestinationPath $zip
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-          "$hash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath dist/ci/SHA256SUMS.txt -Encoding utf8NoBOM
-
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
-        with:
-          name: suitedock-windows-x64-portable
-          path: dist/ci/*
-          if-no-files-found: error
-
   wasm:
     name: wasm32 check + trunk build
     runs-on: ubuntu-latest
     env:
       TRUNK_VERSION: 0.21.14
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: wasm32-unknown-unknown
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: wasm32
       - name: Check wasm-safe crates
         run: cargo xtask wasm
       - name: Clippy (wasm32)
-        run: cargo clippy -p suitedock-core -p suitedock-web --target wasm32-unknown-unknown --locked -- -D warnings
+        run: cargo clippy -p artcraft-launcher-core -p artcraft-launcher-web --target wasm32-unknown-unknown --locked -- -D warnings
       - name: Install trunk
         run: |
-          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+          curl --proto '=https' -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz -C "$HOME/.cargo/bin" trunk
           trunk --version
       # The same build and zip the release makes (size gate and relative-URL check included).

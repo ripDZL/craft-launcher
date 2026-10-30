@@ -4,6 +4,8 @@
 //! The UI sends [`Command`]s and drains [`Event`]s once per frame, so backends do their work on
 //! threads (desktop) or futures (web) and never block a frame.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::platform::{PackageKind, Platform};
@@ -19,8 +21,16 @@ pub enum Command {
     },
     /// Look again at what's installed.
     Detect,
+    /// Fetch published versions for the selector without starting an install.
+    ListVersions {
+        app: String,
+    },
     /// Install or update an app to its latest release.
     Install {
+        app: String,
+    },
+    /// `Install`, writing over what [`Event::Occupied`] reported.
+    Replace {
         app: String,
     },
     Uninstall {
@@ -37,21 +47,56 @@ pub enum Command {
     Pause {
         app: String,
     },
-    /// Stop a running download, remove a waiting job, or throw away a paused download.
+    /// Stop a running download, or throw away a paused one or one kept after a failed install.
     Cancel {
         app: String,
     },
-    /// Download the newer SuiteDock, put it in place and restart into it.
+    /// Download the newer ArtCraft Launcher, put it in place and restart into it.
     UpdateLauncher,
+    /// Fetch the pictures of an app's details page (`core::details`), one [`Event::Screenshot`]
+    /// each, the lead picture first. Pictures already saved on this machine arrive without
+    /// touching the network. Asking again while they are on their way does nothing.
+    FetchScreenshots {
+        app: String,
+    },
     /// Change how the backend behaves.
     Configure(BackendOptions),
 }
 
+/// Parent folders for new installs. Existing installations keep their recorded location.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InstallLocations {
+    pub root: Option<String>,
+    pub per_app: BTreeMap<String, String>,
+}
+
+impl InstallLocations {
+    pub fn folder(&self, app: &str) -> Option<&str> {
+        self.per_app.get(app).map(String::as_str).or(self.root.as_deref())
+    }
+}
+
+/// Which published build to follow. A pinned version never changes on its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionTrack {
+    #[default]
+    Stable,
+    Nightly,
+    Pinned(String),
+}
+
 /// Settings the backend needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BackendOptions {
+    pub install_locations: InstallLocations,
     /// Package formats to install, best first (empty: the platform default).
     pub kinds: Vec<PackageKind>,
+    /// Per-app version choices; an absent entry follows stable releases.
+    pub versions: BTreeMap<String, VersionTrack>,
+    /// The launcher's own version choice.
+    pub launcher_version: VersionTrack,
     /// Offer pre-releases (`0.6.0-rc.1`) as updates.
     pub prereleases: bool,
 }
@@ -69,8 +114,6 @@ pub enum LatestRelease {
 /// What a running job is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobPhase {
-    /// Waiting for the previous app's download and installer to finish.
-    Queued,
     Downloading {
         done: u64,
         total: u64,
@@ -81,6 +124,8 @@ pub enum JobPhase {
         total: u64,
     },
     Verifying,
+    /// The system's installer is busy with another app; this one goes next.
+    Waiting,
     /// Waiting on the OS installer (MSI) or copying files.
     Installing,
     Removing,
@@ -98,6 +143,9 @@ pub struct PausedDownload {
 pub const PAUSED: &str = "paused";
 /// The `JobFinished` error a cancelled job ends with (not a failure).
 pub const CANCELLED: &str = "cancelled";
+/// The `JobFinished` error of an install whose system prompt (password, Windows Installer) the
+/// user dismissed after the download finished (not a failure).
+pub const INSTALL_CANCELLED: &str = "install cancelled";
 
 /// Which service an app's release information came from (the footer names them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -150,7 +198,12 @@ pub enum Event {
         /// The service this answer came from.
         from: Origin,
     },
-    /// The latest SuiteDock release, when it's newer than this one.
+    /// The published versions of an app (or the launcher), bounded to the latest 100.
+    Versions {
+        app: String,
+        result: Result<Vec<Release>, String>,
+    },
+    /// The latest ArtCraft Launcher release, when it's newer than this one.
     LauncherUpdate(Release),
     /// The new launcher is in place (or will be, once this one exits): quit now so it can start.
     LauncherRestarting,
@@ -173,10 +226,29 @@ pub enum Event {
         app: String,
         download: Option<PausedDownload>,
     },
+    /// Whether a finished download is waiting because its install step failed; `Install` checks
+    /// it again and goes straight to installing.
+    ReadyToInstall {
+        app: String,
+        ready: bool,
+    },
+    /// A new install stopped before downloading because `path` already exists and the launcher
+    /// didn't put it there. `Command::Replace` installs over it.
+    Occupied {
+        app: String,
+        path: String,
+    },
     /// A job ended: `Ok` carries a short success message, `Err` what went wrong.
     JobFinished {
         app: String,
         result: Result<String, String>,
+    },
+    /// One picture of an app's details page, or why it couldn't be had (offline, not published,
+    /// not a JPEG). `key` is the [`crate::details::Shot::key`].
+    Screenshot {
+        app: String,
+        key: String,
+        result: Result<Vec<u8>, String>,
     },
     CheckStarted,
     CheckFinished {
@@ -196,7 +268,9 @@ pub struct Capabilities {
     /// What "show in file manager" is called here (`Show in Finder`).
     pub reveal_label: &'static str,
     /// The launcher can update itself in place and restart (an installed build, not a dev build or
-    /// a Flatpak). Without it the UI offers the download instead.
+    /// a Flatpak from anywhere but the release bundle). Without it the UI offers the download
+    /// instead. A backend may only know this once it has found a newer launcher, so the UI reads
+    /// it again on [`Event::LauncherUpdate`].
     pub self_update: bool,
 }
 
@@ -210,4 +284,28 @@ pub trait Backend {
     fn platform(&self) -> Option<Platform>;
     /// Unix seconds now.
     fn now(&self) -> i64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_folders_inherit_the_default_unless_the_app_has_an_override() {
+        let mut locations = InstallLocations::default();
+        assert_eq!(locations.folder("photocraft"), None);
+        locations.root = Some("/Volumes/Craft".into());
+        locations.per_app.insert("photocraft".into(), "/Volumes/Photo".into());
+        assert_eq!(locations.folder("photocraft"), Some("/Volumes/Photo"));
+        assert_eq!(locations.folder("filmcraft"), Some("/Volumes/Craft"));
+        locations.per_app.remove("photocraft");
+        assert_eq!(locations.folder("photocraft"), Some("/Volumes/Craft"));
+    }
+
+    #[test]
+    fn old_backend_options_keep_system_install_locations() {
+        let options: BackendOptions = serde_json::from_str(r#"{"kinds":[],"prereleases":true}"#).unwrap();
+        assert!(options.prereleases);
+        assert_eq!(options.install_locations, InstallLocations::default());
+    }
 }
