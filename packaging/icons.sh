@@ -15,8 +15,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="$ROOT/assets/app-icon"
 BRAND="$ROOT/docs/brand"
-SVG="$BRAND/artcraft-mark.svg"
-ID="ai.storyteller.artcraft-launcher"
+SVG="$BRAND/suitedock-mark.svg"
+ID="io.github.ripdzl.suitedock"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -35,7 +35,7 @@ render() {
   resvg -w "$size" -h "$size" "$src" "$out" </dev/null
 }
 
-render "$MAC" 1024 "$DIR/artcraft-launcher-1024.png"
+render "$MAC" 1024 "$DIR/suitedock-1024.png"
 
 # Linux hicolor theme.
 for s in 16 24 32 48 64 128 256 512; do
@@ -44,7 +44,7 @@ for s in 16 24 32 48 64 128 256 512; do
 done
 mkdir -p "$DIR/hicolor/scalable/apps"
 cp "$SVG" "$DIR/hicolor/scalable/apps/$ID.svg"
-cp "$SVG" "$DIR/artcraft-launcher.svg"
+cp "$SVG" "$DIR/suitedock.svg"
 
 # Windows .ico.
 ICO_PNGS=()
@@ -52,7 +52,7 @@ for s in 16 20 24 32 40 48 64 128 256; do
   render "$FLAT" "$s" "$TMP/ico-$s.png"
   ICO_PNGS+=("$TMP/ico-$s.png")
 done
-(cd "$ROOT" && cargo run -q -p xtask -- ico "$DIR/artcraft-launcher.ico" "${ICO_PNGS[@]}")
+(cd "$ROOT" && cargo run -q -p xtask -- ico "$DIR/suitedock.ico" "${ICO_PNGS[@]}")
 
 # macOS .icns.
 ICNS_PNGS=()
@@ -60,10 +60,10 @@ for s in 16 32 64 128 256 512 1024; do
   render "$MAC" "$s" "$TMP/icns-$s.png"
   ICNS_PNGS+=("$TMP/icns-$s.png")
 done
-(cd "$ROOT" && cargo run -q -p xtask -- icns "$DIR/artcraft-launcher.icns" "${ICNS_PNGS[@]}")
+(cd "$ROOT" && cargo run -q -p xtask -- icns "$DIR/suitedock.icns" "${ICNS_PNGS[@]}")
 
 # Tray icons: the black mark is the macOS menu-bar template (44 px = 22 pt @2x; macOS tints it);
 # the blue one is for the Windows notification area and Linux/BSD status notifiers.
-render "$BRAND/artcraft-mark-black.svg" 44 "$BRAND/artcraft-mark-black-44.png"
-render "$BRAND/artcraft-mark.svg" 64 "$BRAND/artcraft-mark-64.png"
+render "$BRAND/suitedock-mark-black.svg" 44 "$BRAND/suitedock-mark-black-44.png"
+render "$BRAND/suitedock-mark.svg" 64 "$BRAND/suitedock-mark-64.png"
 echo "icons written to $DIR"

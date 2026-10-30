@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build, sign and (optionally) notarize the macOS release artifact:
 #
-#   $DIST/artcraft-launcher-<version>-macos-<arch>.dmg   ArtCraft Launcher.app on a drag-to-Applications DMG
+#   $DIST/suitedock-<version>-macos-<arch>.dmg   SuiteDock.app on a drag-to-Applications DMG
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
@@ -17,8 +17,8 @@ set -euo pipefail
 HERE="$ROOT/packaging/macos"
 
 # ---- app-specific values ----------------------------------------------------------------------
-PKG=artcraft-launcher          # cargo package and binary
-APP_NAME="ArtCraft Launcher"   # display name: bundle, executable, icon, DMG volume
+PKG=suitedock          # cargo package and binary
+APP_NAME="SuiteDock"   # display name: bundle, executable, icon, DMG volume
 
 ARCH=universal
 SKIP_BUILD=0
@@ -112,7 +112,7 @@ stapler_retry() {
   exit 1
 }
 
-# ---- ArtCraft Launcher.app ---------------------------------------------------------------------
+# ---- SuiteDock.app ---------------------------------------------------------------------
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
@@ -120,7 +120,7 @@ cp "$WORK/bin/$PKG" "$APP/Contents/MacOS/$APP_NAME"
 cp "$ROOT/assets/app-icon/$PKG.icns" "$APP/Contents/Resources/$APP_NAME.icns"
 cp "$ROOT/NOTICE" "$APP/Contents/Resources/"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
-  -e "s/@BUILD_SHA@/${ARTCRAFT_LAUNCHER_BUILD_SHA:-unknown}/g" \
+  -e "s/@BUILD_SHA@/${SUITEDOCK_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 if /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist" >/dev/null 2>&1; then
@@ -153,10 +153,8 @@ STAGE="$WORK/dmg"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME.app"
 ln -s /Applications "$STAGE/Applications"
-# Finder window layout: background, icon size and positions (packaging/macos/dmg/README.md).
-mkdir -p "$STAGE/.background"
-cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
-cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
+# SuiteDock deliberately uses the default Finder DMG layout. The upstream custom background
+# contains ArtCraft trademark artwork and is not distributed by this fork.
 rm -f "$DMG"
 # `hdiutil create -srcfolder` writes the files as they are. `makehybrid -hfs` gave every file a
 # com.apple.FinderInfo, which `codesign --verify --strict` rejects as "Finder information, or
