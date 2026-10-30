@@ -1,0 +1,46 @@
+name: Beta maintenance
+
+on:
+  push:
+    branches:
+      - beta-upstream-2026-10-30
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-maintenance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-and-archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: beta-upstream-2026-10-30
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Apply rustfmt
+        shell: bash
+        run: |
+          cargo fmt --all
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -u
+            git commit -m "Apply rustfmt to refreshed beta"
+            git push origin HEAD:beta-upstream-2026-10-30
+          fi
+      - name: Create source archive
+        shell: bash
+        run: git archive --format=zip --prefix=SuiteDock-beta/ -o SuiteDock-beta-2026-10-30.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: SuiteDock-beta-source
+          path: SuiteDock-beta-2026-10-30.zip
+          if-no-files-found: error
+          compression-level: 0
