@@ -289,7 +289,7 @@ fn harness_full(
         Some(platform) => Box::new(PlatformFake { inner: fake, platform }),
         None => Box::new(fake),
     });
-    let settings = Settings { view, notify: false, ..Settings::default() };
+    let settings = Settings { view, notify: false, show_social_links: true, ..Settings::default() };
     // No `.wgpu()`: it gives every test its own GPU device, and those segfault on parallel test threads (see above).
     // The default renderer creates one only when a test renders.
     let harness = test_harness_builder(theme).with_size(egui::vec2(1180.0, 1200.0)).with_pixels_per_point(scale).with_theme(theme).build_ui_state(
@@ -354,7 +354,7 @@ fn folder_harness(picked: Rc<RefCell<Option<String>>>) -> (Harness<'static, Opti
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);
@@ -483,7 +483,7 @@ fn version_menu(latest: Release, answer: Vec<Release>) -> VersionsHarness {
     let mut h = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 1200.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut DummyHost);
@@ -686,7 +686,7 @@ fn the_install_folder_fields_default_to_the_hosts_answer() {
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);
@@ -1146,7 +1146,7 @@ fn keeps_working_with_no_window_then_draws_in_a_new_one() {
     let backend =
         Fake { events: events(), sent: sent.clone(), manage: true, pictures: Rc::default(), asked: Vec::new(), clock: Rc::new(Cell::new(NOW)) };
     let windowless = egui::Context::default();
-    let mut ui = LauncherUi::new(&windowless, Box::new(backend), Settings { notify: false, ..Settings::default() });
+    let mut ui = LauncherUi::new(&windowless, Box::new(backend), Settings { notify: false, show_social_links: true, ..Settings::default() });
     // No window: the backend's news is still taken in.
     ui.logic(&windowless, &mut NoHost);
     assert!(sent.borrow().contains(&Command::CheckForUpdates { force: false }));
@@ -1534,7 +1534,7 @@ fn the_first_close_to_the_tray_is_explained_once() {
     l.hidden_to_tray(&mut host);
     assert!(l.settings.tray_hint_shown);
     assert_eq!(host.0.len(), 1, "{:?}", host.0);
-    assert_eq!(host.0[0].0, "ArtCraft Launcher is still running");
+    assert_eq!(host.0[0].0, "SuiteDock is still running");
     assert!(host.0[0].1.contains("tray icon"), "{}", host.0[0].1);
 }
 
@@ -1719,7 +1719,7 @@ fn looks_again_at_installed_apps_every_few_minutes_not_every_frame() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -1787,7 +1787,7 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut host);
@@ -1797,9 +1797,9 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
         None,
     );
     h.run_steps(6);
-    h.get_by_role_and_label(egui::accesskit::Role::Label, "ArtCraft Launcher 0.2.0 is available.");
+    h.get_by_role_and_label(egui::accesskit::Role::Label, "SuiteDock 0.2.0 is available.");
     assert_eq!(
-        h.query_all_by_label_contains("ArtCraft Launcher 0.2.0 is available").count(),
+        h.query_all_by_label_contains("SuiteDock 0.2.0 is available").count(),
         1,
         "the update title is announced once, not once by the icon and once by the heading"
     );
@@ -1828,9 +1828,9 @@ fn launcher_update_prompts_to_relaunch_with_updated_version() {
     let (mut h, _) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
     h.run_steps(6);
     // Dialog pops up on launch with the update prompt
-    h.get_by_role_and_label(egui::accesskit::Role::Label, "ArtCraft Launcher 0.2.0 is available.");
+    h.get_by_role_and_label(egui::accesskit::Role::Label, "SuiteDock 0.2.0 is available.");
     assert_eq!(
-        h.query_all_by_label_contains("ArtCraft Launcher 0.2.0 is available").count(),
+        h.query_all_by_label_contains("SuiteDock 0.2.0 is available").count(),
         1,
         "the update title is announced once, not once by the icon and once by the heading"
     );
@@ -1880,7 +1880,7 @@ fn feed_announcements_and_alerts_show_until_dismissed() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -1989,7 +1989,7 @@ fn the_footer_names_the_services_behind_what_is_on_screen() {
                 if state.is_none()
                     && let Some(b) = backend.take()
                 {
-                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
                 }
                 if let Some(l) = state.as_mut() {
                     l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -2041,7 +2041,7 @@ fn custom_title_bar_has_window_buttons() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut FramelessHost);
@@ -2401,7 +2401,7 @@ fn the_rate_limit_notice_never_runs_under_the_footer_links() {
                 if state.is_none()
                     && let Some(b) = backend.take()
                 {
-                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
+                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
                 }
                 if let Some(l) = state.as_mut() {
                     l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -2468,6 +2468,23 @@ fn the_toolbar_has_no_filter_dropdown() {
     // Only the sort dropdown is left.
     assert_eq!(h.query_all_by_role(egui::accesskit::Role::ComboBox).count(), 1);
     assert_eq!(h.state().as_ref().unwrap().settings.filter, Filter::All);
+}
+
+#[test]
+fn community_links_can_be_hidden_without_removing_settings_links() {
+    let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
+    h.run_steps(6);
+    if let Some(ui) = h.state_mut().as_mut() {
+        ui.settings.show_social_links = false;
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("Discord").is_none(), "footer community links are hidden");
+    h.get_by_label("Settings").click();
+    h.run_steps(3);
+    h.get_by_label("Join the Discord");
+    h.get_by_label("Show community and social links outside Settings").click();
+    h.run_steps(3);
+    assert!(h.query_all_by_label_contains("Discord").count() >= 2, "Settings and footer links are both visible after enabling");
 }
 
 #[test]

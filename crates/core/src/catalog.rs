@@ -235,21 +235,26 @@ pub const DISCORD_URL: &str = "https://discord.gg/artcraft";
 /// Deep link into the Discord application for the ArtCraft server invite.
 pub const DISCORD_APP_URL: &str = "discord://-/invite/artcraft";
 
-/// ArtCraft Launcher itself, described like a Craft App so it can update itself with the same
+/// SuiteDock itself, described like a Craft App so it can update itself with the same
 /// machinery (asset names `artcraft-launcher-<ver>-…`, bundle id `ai.storyteller.artcraft-launcher`,
-/// `ArtCraft Launcher.app`). Not part of [`SUITE`].
-pub const LAUNCHER: CraftApp = app(
-    "artcraft-launcher",
-    "ArtCraft Launcher",
-    "Installs and updates the Craft App Suite",
-    [[0x0b, 0x0b, 0x0c], [0x0b, 0x0b, 0x0c], [0xf2, 0xf1, 0xee]],
-    "storytold/craft-launcher",
-);
+/// `SuiteDock.app`). Not part of [`SUITE`].
+pub const LAUNCHER: CraftApp = CraftApp {
+    bundle: Some("io.github.ripdzl.suitedock"),
+    publisher: "SuiteDock contributors",
+    site: Some("https://github.com/ripDZL/craft-launcher"),
+    ..app(
+        "suitedock",
+        "SuiteDock",
+        "Installs and updates the Craft App Suite",
+        [[0x0b, 0x0b, 0x0c], [0x0b, 0x0b, 0x0c], [0xf2, 0xf1, 0xee]],
+        "ripDZL/craft-launcher",
+    )
+};
 
 /// The launcher's own repo, checked so it can say when a newer launcher is out.
-pub const LAUNCHER_REPO: &str = "storytold/craft-launcher";
+pub const LAUNCHER_REPO: &str = "ripDZL/craft-launcher";
 /// The launcher's own asset stem.
-pub const LAUNCHER_ID: &str = "artcraft-launcher";
+pub const LAUNCHER_ID: &str = "suitedock";
 
 /// A Craft App's 128 px icon (PNG), as copied from its repo into `assets/app-icons`: the UI
 /// draws it, and the Linux install puts it in the desktop menu.
