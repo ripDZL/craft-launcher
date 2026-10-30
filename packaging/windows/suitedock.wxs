@@ -50,7 +50,7 @@
     <Icon Id="SuiteDockIcon.exe" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="SuiteDockIcon.exe" />
     <Property Id="ARPURLINFOABOUT" Value="https://getartcraft.com/apps" />
-    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/storytold/craft-launcher/releases" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/ripDZL/craft-launcher/releases" />
     <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
 
     <StandardDirectory Id="LocalAppDataFolder">
