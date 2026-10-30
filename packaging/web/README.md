@@ -1,13 +1,13 @@
 # Hosting ArtCraft Launcher for the web
 
-`artcraft-launcher-web-<version>.zip` (from the GitHub release, or `packaging/web/package.sh`)
-holds a static site in `artcraft-launcher-web-<version>/`:
+`suitedock-web-<version>.zip` (from the GitHub release, or `packaging/web/package.sh`)
+holds a static site in `suitedock-web-<version>/`:
 
 | File | What it is |
 |---|---|
 | `index.html` | The page. It loads everything through relative URLs. |
-| `artcraft-launcher-web-<hash>.js` | wasm-bindgen glue (generated, ES module) |
-| `artcraft-launcher-web-<hash>_bg.wasm` | The app (egui, built with the `wasm-release` Cargo profile) |
+| `suitedock-web-<hash>.js` | wasm-bindgen glue (generated, ES module) |
+| `suitedock-web-<hash>_bg.wasm` | The app (egui, built with the `wasm-release` Cargo profile) |
 | `_headers`, `.htaccess` | Sample header rules for Netlify/Cloudflare Pages and Apache |
 
 There is no server-side code and no hand-written JavaScript. Upload the folder's contents anywhere

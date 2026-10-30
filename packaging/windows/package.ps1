@@ -104,7 +104,7 @@ Copy-Item (Join-Path $Bin $Exe) $Stage
 #     "Launcher" label and the Craft apps' icons in a hairline grid.
 #   - banner, 493x58: across the top of the inner pages. The page title is drawn over its left
 #     side, so that stays white; the right end is a dark cell with the mark.
-# The ArtCraft mark and wordmark are drawn as supplied (docs/brand/LICENSE-brand.txt).
+# The SuiteDock mark and wordmark are original fork artwork.
 function New-InstallerArt([string] $BannerOut, [string] $DialogOut) {
   Add-Type -AssemblyName System.Drawing
   $ink = [System.Drawing.ColorTranslator]::FromHtml('#121316')
@@ -115,7 +115,7 @@ function New-InstallerArt([string] $BannerOut, [string] $DialogOut) {
   $apps = 'photocraft', 'vectorcraft', 'filmcraft', 'lightcraft', 'pdfcraft', 'effectcraft',
     'designcraft', 'figcraft', 'wordcraft', 'soundcraft', 'deckcraft', 'cadcraft', 'gridcraft'
   $mark = [System.Drawing.Image]::FromFile((Join-Path $Root 'assets\app-icon\hicolor\256x256\apps\io.github.ripdzl.suitedock.png'))
-  $wordmark = [System.Drawing.Image]::FromFile((Join-Path $Root 'docs\brand\artcraft-logo-white.png'))
+  $wordmark = [System.Drawing.Image]::FromFile((Join-Path $Root 'docs\brand\suitedock-logo-white.png'))
   $icons = $apps | ForEach-Object { [System.Drawing.Image]::FromFile((Join-Path $Root "assets\app-icons\$_.png")) }
   # The site's label face; GDI+ draws a variable font at its default instance (Regular).
   $fonts = New-Object System.Drawing.Text.PrivateFontCollection
