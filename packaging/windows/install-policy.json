@@ -1,14 +1,14 @@
 {
-  "id": "artcraft-launcher",
-  "name": "ArtCraft Launcher",
+  "id": "suitedock",
+  "name": "SuiteDock",
   "mode": "perUser",
   "upgradeCode": "1AC08DBF-D4CF-4BA4-A81E-CAA5C1004974",
   "sources": [
-    "artcraft-launcher.wxs"
+    "suitedock.wxs"
   ],
-  "icon": "assets/app-icon/artcraft-launcher.ico",
+  "icon": "assets/app-icon/suitedock.ico",
   "localization": [
-    "artcraft-launcher.en-us.wxl"
+    "suitedock.en-us.wxl"
   ],
   "extensions": [
     "UI",
@@ -16,36 +16,36 @@
   ],
   "payloads": [
     "NOTICE",
-    "artcraft-launcher.exe"
+    "suitedock.exe"
   ],
   "registry": [
     [
       "1",
-      "Software\\Learning Machines LLC\\ArtCraft Launcher",
+      "Software\\Learning Machines LLC\\SuiteDock",
       "InstallDir",
       "[INSTALLFOLDER]"
     ],
     [
       "1",
-      "Software\\Learning Machines LLC\\ArtCraft Launcher",
+      "Software\\Learning Machines LLC\\SuiteDock",
       "DesktopShortcutChoice",
       "[DESKTOPSHORTCUTCHOICE]"
     ],
     [
       "1",
-      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\artcraft-launcher.exe",
+      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\suitedock.exe",
       "",
-      "[#ArtCraftLauncherExe]"
+      "[#SuiteDockExe]"
     ],
     [
       "1",
-      "Software\\Learning Machines LLC\\ArtCraft Launcher",
+      "Software\\Learning Machines LLC\\SuiteDock",
       "StartMenuShortcut",
       "#1"
     ],
     [
       "1",
-      "Software\\Learning Machines LLC\\ArtCraft Launcher",
+      "Software\\Learning Machines LLC\\SuiteDock",
       "DesktopShortcut",
       "#1"
     ]
