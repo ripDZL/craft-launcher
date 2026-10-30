@@ -74,7 +74,7 @@
 	Reinstall	Újratelepítés
 	Uninstall…	Eltávolítás…
 	All releases	Minden kiadás
-	SuiteDock {version} is available.	Elérhető az SuiteDock új verziója: {version}.
+	SuiteDock {version} is available.	Elérhető a SuiteDock új verziója: {version}.
 	Dismiss	Elrejtés
 	Update and restart	Frissítés és újraindítás
 	A new version is available. Would you like to relaunch with the updated version?	Új verzió érhető el. Újraindítod az alkalmazást a frissítéshez?
@@ -104,7 +104,7 @@
 	Community	Közösség
 	Questions, ideas and news from the ArtCraft team	Kérdések, ötletek és hírek az ArtCraft csapatától
 	Appearance	Megjelenés
-	Quit SuiteDock	Kilépés az SuiteDockből
+	Quit SuiteDock	Kilépés a SuiteDockból
 	Done	Kész
 	Uninstall {name}?	{name} eltávolítása?
 	The app will be moved to the Trash. Your documents and settings stay.	Az alkalmazás a Kukába kerül. A dokumentumaid és beállításaid megmaradnak.
@@ -254,7 +254,7 @@ month	Dec	dec.
 	Full changelog	Teljes változásnapló
 	link	hivatkozás
 	No apps match	Nincs találat
-	Open SuiteDock to update.	Nyisd meg az SuiteDockt a frissítéshez.
+	Open SuiteDock to update.	Nyisd meg a SuiteDockot a frissítéshez.
 	{name} {v} is available	Elérhető: {name} {v}
 	{count} updates are available	{count} frissítés elérhető
 	These notes weren't fetched (GitHub's request limit was reached). They're on the release page.	A kiadási információkat nem sikerült betölteni, mert elértük a GitHub lekérdezési korlátját. A kiadás oldalán megtalálod őket.
@@ -323,7 +323,7 @@ filter	Installed	Telepítve
 @id	launcher.notes	Újdonságok
 @id	launcher.dismiss	Elrejtés
 @id	settings.open	Beállítások
-@id	settings.quit	Kilépés az SuiteDockből
+@id	settings.quit	Kilépés a SuiteDockból
 @id	view.grid	Rács
 @id	view.table	Táblázat
 @id	filter.all	Összes
@@ -369,7 +369,7 @@ filter	Installed	Telepítve
 @msg	couldn't use install folder {path}: {reason}	a(z) {path} telepítési mappa nem használható: {reason}
 @msg	this release has no AppImage for a custom install folder	ez a kiadás nem tartalmaz AppImage-fájlt egyéni telepítési mappához
 @msg	custom install folders aren't supported on this system	ezen a rendszeren nem támogatottak az egyéni telepítési mappák
-@msg	{path} already exists and wasn't installed by SuiteDock	a(z) {path} már létezik, és nem az SuiteDock telepítette
+@msg	{path} already exists and wasn't installed by SuiteDock	a(z) {path} már létezik, és nem a SuiteDock telepítette
 @msg	couldn't move {path} to Trash ({reason}). Remove it in Finder instead.	a(z) {path} nem helyezhető a Kukába ({reason}). Távolítsa el a Finderben.
 	Apps are placed inside this folder.	Az alkalmazások ebbe a mappába kerülnek.
 	Replace what's there?	Lecseréli, ami ott van?
