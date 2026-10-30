@@ -2,17 +2,17 @@
 <!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
      manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
 <component type="desktop-application">
-  <id>ai.storyteller.artcraft-launcher</id>
+  <id>io.github.ripdzl.suitedock</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
-  <name>ArtCraft Launcher</name>
+  <name>SuiteDock</name>
   <summary>Install, update and launch the Craft App Suite</summary>
   <developer id="ai.storyteller">
     <name>Learning Machines LLC</name>
   </developer>
   <description>
     <p>
-      ArtCraft Launcher lists every app in the Craft App Suite (PhotoCraft, LightCraft, FilmCraft,
+      SuiteDock lists every app in the Craft App Suite (PhotoCraft, LightCraft, FilmCraft,
       DesignCraft, VectorCraft, PdfCraft, EffectCraft, WordCraft, DeckCraft, GridCraft, CADCraft,
       SoundCraft and FigCraft), installs the right build for your computer, and keeps them up to date.
     </p>
@@ -22,12 +22,12 @@
       <li>Lives in the system tray and tells you when updates are ready</li>
     </ul>
   </description>
-  <launchable type="desktop-id">ai.storyteller.artcraft-launcher.desktop</launchable>
-  <icon type="stock">ai.storyteller.artcraft-launcher</icon>
+  <launchable type="desktop-id">io.github.ripdzl.suitedock.desktop</launchable>
+  <icon type="stock">io.github.ripdzl.suitedock</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
   <url type="homepage">https://getartcraft.com/apps</url>
-  <url type="bugtracker">https://github.com/storytold/craft-launcher/issues</url>
-  <url type="help">https://github.com/storytold/craft-launcher</url>
+  <url type="bugtracker">https://github.com/ripDZL/craft-launcher/issues</url>
+  <url type="help">https://github.com/ripDZL/craft-launcher</url>
   <url type="contact">https://discord.gg/artcraft</url>
   <categories>
     <category>Utility</category>
@@ -48,7 +48,7 @@
     <control>pointing</control>
   </supports>
   <provides>
-    <binary>artcraft-launcher</binary>
+    <binary>suitedock</binary>
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>

@@ -1,7 +1,7 @@
 # Flatpak manifest for the single-file bundle attached to every GitHub release
-# (artcraft-launcher-<version>-linux-<arch>.flatpak). Build it with packaging/linux/flatpak-bundle.sh.
+# (suitedock-<version>-linux-<arch>.flatpak). Build it with packaging/linux/flatpak-bundle.sh.
 #
-# It repackages the release's own Linux tarball (artcraft-launcher-<version>-linux-<arch>.tar.gz,
+# It repackages the release's own Linux tarball (suitedock-<version>-linux-<arch>.tar.gz,
 # built on Ubuntu 22.04 by package.sh) instead of compiling Rust inside flatpak-builder: no
 # network and no vendored crate sources during the build, a few seconds instead of many minutes,
 # and byte-for-byte the same binary as the AppImage/deb/rpm. The script unpacks the tarball
@@ -9,13 +9,13 @@
 # Wayland, xkbcommon and Vulkan at runtime; the freedesktop runtime has all of them, and the
 # GPU driver comes from its org.freedesktop.Platform.GL extension.
 #
-# ai.storyteller.artcraft-launcher.yml (same directory) is the from-source manifest for Flathub.
+# io.github.ripdzl.suitedock.yml (same directory) is the from-source manifest for Flathub.
 # Keep runtime-version and finish-args identical in both (packaging-lint checks this).
-id: ai.storyteller.artcraft-launcher
+id: io.github.ripdzl.suitedock
 runtime: org.freedesktop.Platform
 runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
-command: artcraft-launcher
+command: suitedock
 finish-args:
   # Display: Wayland first; X11 only when no Wayland compositor is running.
   - --socket=wayland
@@ -38,7 +38,7 @@ finish-args:
   # Apps normally install as Flatpaks and run on the host: `flatpak-spawn --host` (below) starts
   # them, and the home directory is granted so files opened by path work. When the host has no
   # usable Flatpak the launcher falls back to the release tarball, which it unpacks into its own
-  # folder (~/.var/app/ai.storyteller.artcraft-launcher/data/artcraft-launcher/apps/<app>) and
+  # folder (~/.var/app/io.github.ripdzl.suitedock/data/suitedock/apps/<app>) and
   # runs in the same sandbox with HOME pointed at a home/ folder beside it, so each app's
   # settings stay in the sandbox too.
   # LIMITATION: installing software on the host still needs `flatpak-spawn --host`. Distro
@@ -48,14 +48,14 @@ finish-args:
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=home
 modules:
-  - name: artcraft-launcher
+  - name: suitedock
     buildsystem: simple
     build-commands:
-      - install -Dm755 bin/artcraft-launcher /app/bin/artcraft-launcher
-      - install -Dm644 share/applications/ai.storyteller.artcraft-launcher.desktop /app/share/applications/ai.storyteller.artcraft-launcher.desktop
+      - install -Dm755 bin/suitedock /app/bin/suitedock
+      - install -Dm644 share/applications/io.github.ripdzl.suitedock.desktop /app/share/applications/io.github.ripdzl.suitedock.desktop
       # Already has the release's version and date substituted by package.sh.
-      - install -Dm644 share/metainfo/ai.storyteller.artcraft-launcher.metainfo.xml /app/share/metainfo/ai.storyteller.artcraft-launcher.metainfo.xml
-      - mkdir -p /app/share/icons /app/share/doc && cp -R share/icons/hicolor /app/share/icons/ && cp -R share/doc/artcraft-launcher /app/share/doc/
+      - install -Dm644 share/metainfo/io.github.ripdzl.suitedock.metainfo.xml /app/share/metainfo/io.github.ripdzl.suitedock.metainfo.xml
+      - mkdir -p /app/share/icons /app/share/doc && cp -R share/icons/hicolor /app/share/icons/ && cp -R share/doc/suitedock /app/share/doc/
     sources:
       - type: dir
         path: stage
