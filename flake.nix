@@ -58,7 +58,7 @@
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "artcraft-launcher";
+          pname = "suitedock";
           version = version;
           src = ./.;
           cargoLock = {
@@ -92,7 +92,7 @@
 
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/artcraft-launcher";
+          program = "${self.packages.${system}.default}/bin/suitedock";
         };
       });
 }

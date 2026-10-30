@@ -236,7 +236,7 @@ pub const DISCORD_URL: &str = "https://discord.gg/artcraft";
 pub const DISCORD_APP_URL: &str = "discord://-/invite/artcraft";
 
 /// SuiteDock itself, described like a Craft App so it can update itself with the same
-/// machinery (asset names `artcraft-launcher-<ver>-…`, bundle id `ai.storyteller.artcraft-launcher`,
+/// machinery (asset names `suitedock-<ver>-…`, bundle id `io.github.ripdzl.suitedock`,
 /// `SuiteDock.app`). Not part of [`SUITE`].
 pub const LAUNCHER: CraftApp = CraftApp {
     bundle: Some("io.github.ripdzl.suitedock"),

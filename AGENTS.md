@@ -182,9 +182,9 @@ Packaging facts the code relies on:
 - `--socket=pulseaudio` in the launcher manifests is for an app running *inside* the sandbox
   (SoundCraft's ALSA reaches the runtime's PulseAudio plugin through it); it also covers the
   microphone, which SoundCraft records through.
-- `build.rs` reads `ARTCRAFT_LAUNCHER_BUILD_SHA` / `ARTCRAFT_LAUNCHER_BUILD_DATE` and, on Windows,
-  embeds `assets/app-icon/artcraft-launcher.ico`, failing the build when
-  `ARTCRAFT_LAUNCHER_REQUIRE_WINRES=1` and it can't.
+- `build.rs` reads `SUITEDOCK_BUILD_SHA` / `SUITEDOCK_BUILD_DATE` and, on Windows,
+  embeds `assets/app-icon/suitedock.ico`, failing the build when
+  `SUITEDOCK_REQUIRE_WINRES=1` and it can't.
 
 ## 5. Parallel agents
 
