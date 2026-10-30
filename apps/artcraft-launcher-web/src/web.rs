@@ -13,7 +13,7 @@ use wasm_bindgen_futures::JsFuture;
 
 const SETTINGS_KEY: &str = "settings";
 
-/// Tell the UI the browser's languages (`?lang=ru` in the address first, as `ARTCRAFT_LAUNCHER_LOCALE`
+/// Tell the UI the browser's languages (`?lang=ru` in the address first, as `SUITEDOCK_LOCALE`
 /// does on the desktop) before the first frame, so the Automatic interface language follows the
 /// browser; and show the loading text in that language.
 fn detect_language() {
