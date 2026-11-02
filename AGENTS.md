@@ -1,17 +1,20 @@
 # AGENTS.md: guide for AI agents and contributors
 
-ArtCraft Launcher installs, updates and launches the **Craft App Suite** (PhotoCraft, LightCraft,
+SuiteDock installs, updates and launches the **Craft App Suite** (PhotoCraft, LightCraft,
 FilmCraft, DesignCraft, VectorCraft, PdfCraft, EffectCraft, WordCraft, DeckCraft, GridCraft,
 CADCraft, SoundCraft, FigCraft, Craft Anything, TextureCraft), plus approved **community apps** made outside ArtCraft and labelled
 as such (today SolidCraft, by Tangency Labs). It is written in **Rust only** (no JavaScript or TypeScript): the desktop
 app is native egui/eframe, and the web build is the same Rust compiled to WebAssembly (trunk +
 wasm-bindgen). **No Tauri, Electron or webview shells**, ever.
 
-The product name is always **ArtCraft Launcher** in user-facing text: UI, window titles, About,
+SuiteDock is an independent fork of ArtCraft Launcher. The product name is always **SuiteDock** in user-facing text: UI, window titles, About,
 tray menu, notifications, installers, release names, docs prose. The suite is the **Craft App
-Suite**. Machine names stay lowercase: crates and binaries (`artcraft-launcher`,
-`artcraft-launcher-*`), file names, and the app id `ai.storyteller.artcraft-launcher`. Note the
-GitHub repo is `storytold/craft-launcher`, while every file and package is `artcraft-launcher-*`.
+Suite**. The desktop Cargo package and binary are `suitedock`; release assets use `suitedock-*`. The upstream-compatible core crate names and source directory names are intentionally retained to make future merges smaller. Machine identity uses
+`suitedock-*`), file names, and the app id `io.github.ripdzl.suitedock`. Note the
+GitHub repo is `ripDZL/craft-launcher`, while every file and package is `suitedock-*`.
+
+Standards and learnings shared across the Craft apps live in `../craftrules` (read its
+`README.md` and `AGENTS.md`). Contribute reusable learnings there, never code.
 
 ## 1. Workspace map
 
@@ -23,8 +26,8 @@ crates/
                                         verify and install
   ui-egui   artcraft-launcher-ui-egui   the shared egui UI (desktop and web)
 apps/
-  artcraft-launcher                     desktop shell (eframe): window, tray icon, notifications
-  artcraft-launcher-web                 the same UI in the browser (trunk; catalog and downloads only)
+  artcraft-launcher                     desktop shell (Cargo package: suitedock) (eframe): window, tray icon, notifications
+  suitedock-web                 the same UI in the browser (trunk; catalog and downloads only)
 xtask/                                  cargo xtask ci | wasm | version | ico
 packaging/                              macOS, Windows, Linux, FreeBSD and web packaging scripts
 assets/app-icon/                        the launcher's own icon (master SVG, renders, tray icons)
@@ -42,7 +45,8 @@ the apps opens windows, tray icons or notifications.
 ### Never crash (outranks feature work)
 
 A bad network response, a malformed release, a half-downloaded file, a full disk or a corrupt
-settings file must produce an error the user can act on, never a panic.
+settings file must produce an error the user can act on, never a panic. Shared standard:
+`../craftrules/standards/never-crash.md`.
 
 - **Non-test code never panics.** No `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!` or
   `unimplemented!`. Return the crate's error type and propagate with `?`.
@@ -59,13 +63,13 @@ settings file must produce an error the user can act on, never a panic.
   `https://github.com/tangency-labs/solidcraft/releases` (SolidCraft, approved by the project
   owner on 2026-10-28). A community app's repo is pinned in the catalog (`CraftApp::repo`,
   `AppKind::Community`): the release feed can move an app within `storytold/`, never to another
-  owner. The one other exception is a developer's own loopback mirror (`ARTCRAFT_LAUNCHER_DOWNLOAD_BASE`,
+  owner. The one other exception is a developer's own loopback mirror (`SUITEDOCK_DOWNLOAD_BASE`,
   `cargo xtask local`); keep it loopback-only and behind the `local-mirror` cargo feature, which
   release builds never enable.
 - Verify each download against the release's `SHA256SUMS.txt` before running or installing it.
-  Community apps get the same check. On macOS the launcher also requires the Developer ID signature
-  of the app's own team (`CraftApp::mac_team`: ArtCraft's for official apps, SolidCraft's for
-  SolidCraft); an app with none (`mac_team = None`) is not installed there, only opened if present.
+  Community apps get the same check. On macOS the launcher also requires a Developer ID signature
+  it can verify: an app without one (SolidCraft today, `installs_on_mac = false`) is not installed
+  there, only opened if present.
 - The details drawer's pictures are the one other download: JPEGs only, from a pinned tag of
   `https://raw.githubusercontent.com/storytold/craft-launcher-assets/` (`core::details`),
   capped at 2 MB each, cached, and never run. Pictures are not bundled in this repo.
@@ -97,7 +101,7 @@ Every user-facing string goes through `crates/ui-egui/src/i18n` (`tl!("…")` fo
 for `{placeholders}`, `tn` for counts). English in the code is the lookup key; adding a string
 means adding its row to every catalog marked `complete_menus` (the `*.tsv` files in
 `crates/ui-egui/src/i18n/`), which the i18n tests check. Translate clean-room from the meaning of
-the English text, never through another catalog. Product and app names (ArtCraft Launcher, Craft
+the English text, never through another catalog. Product and app names (SuiteDock, Craft
 App Suite, PhotoCraft…) stay in English.
 A CJK language is drawn with the system's own CJK font (`crates/ui-egui/src/cjk_font.rs`, desktop
 only; English where there is none): never bundle a CJK font, they are 10 MB and more.
@@ -105,18 +109,17 @@ only; English where there is none): never bundle a CJK font, they are 10 MB and 
 ### Other rules
 
 1. **Assets need attribution.** Every bundled asset gets a row in `ATTRIBUTION.md` (path, title,
-   author, source, license) in the same change. The ArtCraft name, logo and "A" mark in
-   `docs/brand/` (the header logo and the tray icon) are trademarks, **not MIT/Apache**
-   (`docs/brand/LICENSE-brand.txt`): use them exactly as supplied, never redraw or recolor them.
-2. **Icons are generated.** The app icon and the tray icon are the supplied ArtCraft "A" mark from
-   `docs/brand/` (a trademark, not MIT/Apache); never edit the renders by hand. Run `packaging/icons.sh` (needs `resvg`; runs on any OS) and commit the outputs.
-   `assets/app-icons/` is copied verbatim from each app's repo (`assets/app-icon/hicolor/128x128/apps/ai.storyteller.<app>.png`);
-   refresh it from there, never redraw.
+   author, source, license) in the same change. SuiteDock's wordmark, dock/play mark and app icon
+   are original fork artwork under MIT OR Apache-2.0. Do not reintroduce the upstream ArtCraft
+   Launcher trademark assets into a distributable fork build.
+2. **SuiteDock icons are generated from the fork's own mark.** Keep `docs/brand/suitedock-*` and
+   `assets/app-icon/suitedock*` in sync. `assets/app-icons/` remains copied verbatim from each
+   Craft app's repository; refresh those app icons from their source repos, never redraw them.
 3. **Never break wasm.** `cargo xtask wasm` must pass. File-system, process and OS code is
    `cfg(not(target_arch = "wasm32"))`.
 4. **Tests are the gate.** Release parsing and asset picking in `core` get unit tests with real
    GitHub release JSON fixtures (small, committed under `crates/core/tests/fixtures/`).
-5. When fetching anything, use a generic `ArtCraft-Launcher/<version>` User-Agent and never put
+5. When fetching anything, use a generic `SuiteDock/<version>` User-Agent and never put
    a person's name, email or other personal details in requests.
 6. **Time goes through `jiff`** (workspace dependency). Never hand-roll UTC/calendar conversion
    (days-to-date algorithms, leap-year math); a module owns only its output format string. The one
@@ -140,31 +143,32 @@ packaging/linux/AppRun` and `actionlint`.
 The version lives only in `[workspace.package] version` in the root `Cargo.toml`
 (`cargo xtask version`, `cargo xtask version set X.Y.Z[-pre]`). Pushing to the `release` branch runs
 `.github/workflows/release.yml`, which builds every platform and creates the draft GitHub Release
-**ArtCraft Launcher v<version>** with `SHA256SUMS.txt`.
+**SuiteDock v<version>** with `SHA256SUMS.txt`. The canonical recipe is
+`../craftrules/release/playbook.md`; cutting a release is `../craftrules/release/cut-a-release.md`.
 
 Release assets (keep these names exact; the launcher's own self-update and the README rely on them):
 
 | Platform | Files |
 |---|---|
-| Windows | `artcraft-launcher-<ver>-windows-{x64,x86,arm64}.msi`, `…-windows-{x64,x86,arm64}-portable.zip` |
-| macOS | `artcraft-launcher-<ver>-macos-universal.dmg` |
-| Linux | `artcraft-launcher-<ver>-linux-{x86_64,aarch64}.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}`, `artcraft-launcher-<ver>-linux-riscv64.{deb,rpm,tar.gz}` |
-| FreeBSD | `artcraft-launcher-<ver>-freebsd-x86_64.tar.gz` |
-| Web | `artcraft-launcher-web-<ver>.zip` |
+| Windows | `suitedock-<ver>-windows-{x64,x86,arm64}.msi`, `…-windows-{x64,x86,arm64}-portable.zip` |
+| macOS | `suitedock-<ver>-macos-universal.dmg` |
+| Linux | `suitedock-<ver>-linux-{x86_64,aarch64}.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}`, `suitedock-<ver>-linux-riscv64.{deb,rpm,tar.gz}` |
+| FreeBSD | `suitedock-<ver>-freebsd-x86_64.tar.gz` |
+| Web | `suitedock-web-<ver>.zip` |
 
 Packaging facts the code relies on:
 
 - The Windows MSI is **per-user** (no UAC prompt), by default into
-  `%LOCALAPPDATA%\Programs\ArtCraft Launcher`. Double-clicked it opens a WixUI setup wizard
+  `%LOCALAPPDATA%\Programs\SuiteDock`. Double-clicked it opens a WixUI setup wizard
   (Welcome; a folder page with a "Create a desktop shortcut" box; Ready; progress; Finish with
   "Launch"), whose art `package.ps1` draws at build time; self-update runs it with `/passive`, no
   wizard. The folder and the shortcut choice are recorded under
-  `HKCU\Software\Learning Machines LLC\ArtCraft Launcher` (`InstallDir`,
+  `HKCU\Software\ripDZL\SuiteDock` (`InstallDir`,
   `DesktopShortcutChoice`) and reused by the next version, and `self_update.rs` reads `InstallDir`
   to know the running copy came from the MSI. Its shortcuts set AppUserModelID
-  `ai.storyteller.artcraft-launcher`, which toast notifications need. `portable.txt` beside the exe switches on portable mode
+  `io.github.ripdzl.suitedock`, which toast notifications need. `portable.txt` beside the exe switches on portable mode
   (`ArtCraftLauncherData\` next to the exe).
-- The macOS bundle is `ArtCraft Launcher.app` (executable `Contents/MacOS/ArtCraft Launcher`), a
+- The macOS bundle is `SuiteDock.app` (executable `Contents/MacOS/SuiteDock`), a
   normal Dock app that can also sit in the menu bar: `LSUIElement` must never be set.
 - Linux: the tray uses StatusNotifierItem over D-Bus and notifications use
   `org.freedesktop.Notifications`, both in pure Rust (no GTK, appindicator or libdbus).
@@ -178,9 +182,9 @@ Packaging facts the code relies on:
 - `--socket=pulseaudio` in the launcher manifests is for an app running *inside* the sandbox
   (SoundCraft's ALSA reaches the runtime's PulseAudio plugin through it); it also covers the
   microphone, which SoundCraft records through.
-- `build.rs` reads `ARTCRAFT_LAUNCHER_BUILD_SHA` / `ARTCRAFT_LAUNCHER_BUILD_DATE` and, on Windows,
-  embeds `assets/app-icon/artcraft-launcher.ico`, failing the build when
-  `ARTCRAFT_LAUNCHER_REQUIRE_WINRES=1` and it can't.
+- `build.rs` reads `SUITEDOCK_BUILD_SHA` / `SUITEDOCK_BUILD_DATE` and, on Windows,
+  embeds `assets/app-icon/suitedock.ico`, failing the build when
+  `SUITEDOCK_REQUIRE_WINRES=1` and it can't.
 
 ## 5. Parallel agents
 
@@ -188,8 +192,3 @@ Packaging facts the code relies on:
 - Keep every `Cargo.toml` valid at all times: the `crates/*` and `apps/*` globs mean one broken
   manifest breaks everyone's build. Write manifests to a temp file and `mv` them into place.
 - If someone else's in-progress edit breaks the build, wait and retry; don't fix their files.
-
-## CI workflows
-- Workflows in `.github/workflows/` call the shared workflows in [`storytold/craft-common-actions`](https://github.com/storytold/craft-common-actions) at `@main`, with their inputs and secrets. No other jobs: if no shared workflow does what's needed, it doesn't go here.
-- Don't add or change CI in a feature or fix PR. If the existing workflows can't build or test a change, link an existing craft-common-actions issue or PR, or open a new issue, or a PR only for a small fix that is safe for every app and does not increase CI time.
-- Some workflow files here still run their own jobs. Don't add to them. Moving a job into craft-common-actions is its own task, never part of another PR, and the job stays here until a shared workflow runs it.
