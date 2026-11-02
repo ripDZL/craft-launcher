@@ -505,9 +505,9 @@ mod env_tests {
 
     #[test]
     fn each_variable_becomes_one_env_argument_with_its_value_intact() {
-        let path = std::ffi::OsStr::new("/home/ana/.local/share/artcraft-launcher/versions with space.json");
+        let path = std::ffi::OsStr::new("/home/ana/.local/share/suitedock/versions with space.json");
         let args = env_args(&[("CRAFT_VERSIONS_FILE", path)]);
-        assert_eq!(args, [std::ffi::OsString::from("--env=CRAFT_VERSIONS_FILE=/home/ana/.local/share/artcraft-launcher/versions with space.json")]);
+        assert_eq!(args, [std::ffi::OsString::from("--env=CRAFT_VERSIONS_FILE=/home/ana/.local/share/suitedock/versions with space.json")]);
         assert!(env_args(&[]).is_empty());
     }
 }
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn running_paths_are_matched_literally() {
-        let root = format!("/tmp/artcraft-launcher-process-{}", std::process::id());
+        let root = format!("/tmp/suitedock-process-{}", std::process::id());
         for (actual, requested, expected) in [
             ("plain/PhotoCraft.app", "plain/PhotoCraft.app", true),
             ("Apps (work)/PhotoCraft.app", "Apps (work)/PhotoCraft.app", true),
@@ -650,8 +650,8 @@ mod explorer_tests {
 
     #[test]
     fn explorer_select_uses_backslashes() {
-        let arg = explorer_select_arg(Path::new("C:/Users/A B/AppData/Local/ArtCraft Launcher/apps/photocraft.exe"));
-        assert_eq!(arg.unwrap(), r#"/select,"C:\Users\A B\AppData\Local\ArtCraft Launcher\apps\photocraft.exe""#);
+        let arg = explorer_select_arg(Path::new("C:/Users/A B/AppData/Local/SuiteDock/apps/photocraft.exe"));
+        assert_eq!(arg.unwrap(), r#"/select,"C:\Users\A B\AppData\Local\SuiteDock\apps\photocraft.exe""#);
     }
 }
 
