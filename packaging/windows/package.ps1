@@ -104,7 +104,7 @@ Copy-Item (Join-Path $Bin $Exe) $Stage
 #     "Launcher" label and the Craft apps' icons in a hairline grid.
 #   - banner, 493x58: across the top of the inner pages. The page title is drawn over its left
 #     side, so that stays white; the right end is a dark cell with the mark.
-# The SuiteDock mark and wordmark are original fork artwork.
+# The ArtCraft mark and wordmark are drawn as supplied (docs/brand/LICENSE-brand.txt).
 function New-InstallerArt([string] $BannerOut, [string] $DialogOut) {
   Add-Type -AssemblyName System.Drawing
   $ink = [System.Drawing.ColorTranslator]::FromHtml('#121316')
@@ -113,7 +113,7 @@ function New-InstallerArt([string] $BannerOut, [string] $DialogOut) {
   $line = [System.Drawing.Color]::FromArgb(38, 242, 241, 238)
   # The Craft App Suite, in the launcher's order (crates/core/src/catalog.rs).
   $apps = 'photocraft', 'vectorcraft', 'filmcraft', 'lightcraft', 'pdfcraft', 'effectcraft',
-    'designcraft', 'figcraft', 'wordcraft', 'soundcraft', 'deckcraft', 'cadcraft', 'gridcraft', 'craft-anything', 'texturecraft'
+    'designcraft', 'figcraft', 'wordcraft', 'soundcraft', 'deckcraft', 'cadcraft', 'gridcraft', 'craft-anything', 'texturecraft', 'materialcraft'
   $mark = [System.Drawing.Image]::FromFile((Join-Path $Root 'assets\app-icon\hicolor\256x256\apps\io.github.ripdzl.suitedock.png'))
   $wordmark = [System.Drawing.Image]::FromFile((Join-Path $Root 'docs\brand\suitedock-logo-white.png'))
   $icons = $apps | ForEach-Object { [System.Drawing.Image]::FromFile((Join-Path $Root "assets\app-icons\$_.png")) }
@@ -150,12 +150,12 @@ function New-InstallerArt([string] $BannerOut, [string] $DialogOut) {
             $x += $g.MeasureString([string]$ch, $labelFont, 100, [System.Drawing.StringFormat]::GenericTypographic).Width + 1.35
           }
           $brush.Dispose()
-          # The apps, three to a row, in 36 px cells divided by hairlines (five rows fit above 312).
+          # The sixteen apps in four columns of 30 px cells: x=22..142, y=118..238.
           $pen = New-Object System.Drawing.Pen $line, 1
-          $left = 22; $top = 118; $cell = 36
+          $left = 22; $top = 118; $cell = 30; $columns = 4
           for ($i = 0; $i -lt $icons.Count; $i++) {
-            $cx = $left + ($i % 3) * $cell
-            $cy = $top + [math]::Floor($i / 3) * $cell
+            $cx = $left + ($i % $columns) * $cell
+            $cy = $top + [math]::Floor($i / $columns) * $cell
             $g.DrawRectangle($pen, $cx, $cy, $cell, $cell)
             $g.DrawImage($icons[$i], $cx + 5, $cy + 5, $cell - 10, $cell - 10)
           }
@@ -202,7 +202,7 @@ foreach ($f in 'README.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE', 'ATTRIBUT
   if (Test-Path $p) { Copy-Item $p $Portable }
 }
 # portable.txt beside suitedock.exe switches on portable mode: settings and the download
-# cache go to SuiteDockData\ next to the exe instead of %APPDATA%.
+# cache go to ArtCraftLauncherData\ next to the exe instead of %APPDATA%.
 Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable
 $Zip = Join-Path $Dist "$Pkg-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
