@@ -1,13 +1,13 @@
 # SuiteDock beta refresh — November 2, 2026
 
 This staging source is rebased onto upstream `storytold/craft-launcher` main at commit
-`ec205366ebe42635e155b9ab246f036052fef406` (workspace v0.13.0). It is not a
+`ab20d70e3841a4685c05d1363b6fcde6e386a471` (workspace v0.13.0). It is not a
 validated release: GitHub Actions has not yet produced results for the November 2 merge.
 
 ## New upstream functionality
 
 - All upstream changes since the October 30 v0.10 snapshot, including the new TextureCraft
-  and Craft Anything catalog entries, release/install reliability improvements, the MSI
+  Craft Anything and MaterialCraft catalog entries, release/install reliability improvements, the MSI
   batch refactor, additional macOS verification, updated queues, pinning and recovery.
 - Upstream dependency updates and the 0.13.0 Cargo.lock.
 - Current Linux, Windows, macOS, FreeBSD and wasm/web sources and packaging updates.
