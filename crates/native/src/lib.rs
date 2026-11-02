@@ -1,4 +1,4 @@
-//! SuiteDock's desktop backend.
+//! ArtCraft Launcher's desktop backend.
 //!
 //! [`NativeBackend`] runs every slow thing (HTTP, scanning disks, installers) on worker threads
 //! and reports back through [`Event`](artcraft_launcher_core::protocol::Event)s, so the UI never
@@ -19,6 +19,7 @@ pub mod manifest;
 mod msi_context;
 pub mod packages;
 pub mod paths;
+pub mod pins;
 #[cfg(windows)]
 pub mod portable;
 pub mod process;

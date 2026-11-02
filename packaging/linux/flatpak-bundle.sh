@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
-# Repackage an SuiteDock Linux tarball as a single-file Flatpak bundle:
+# Repackage an ArtCraft Launcher Linux tarball as a single-file Flatpak bundle:
 #
-#   $DIST/suitedock-<version>-linux-<arch>.flatpak
+#   $DIST/artcraft-launcher-<version>-linux-<arch>.flatpak
 #
 # Usage: packaging/linux/flatpak-bundle.sh [--no-test] [TARBALL]
 #
-# TARBALL defaults to $DIST/suitedock-<version>-linux-<arch>.tar.gz from package.sh. The bundle
+# TARBALL defaults to $DIST/artcraft-launcher-<version>-linux-<arch>.tar.gz from package.sh. The bundle
 # is built for the host architecture (x86_64 or aarch64), which must match the tarball's.
 # Needs flatpak, flatpak-builder and the SVG pixbuf loader (librsvg2-common) for the host's
 # `appstreamcli compose`; the freedesktop runtime and SDK named in the manifest are
 # installed per-user from Flathub. Unless --no-test, the bundle is then installed per-user and its
 # files are listed inside the sandbox as a smoke test (the launcher is GUI-only, so it isn't run).
-# Manifest: packaging/linux/flatpak/io.github.ripdzl.suitedock.bundle.yml.
+# Manifest: packaging/linux/flatpak/ai.storyteller.artcraft-launcher.bundle.yml.
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/linux"
-APP_ID=io.github.ripdzl.suitedock
-PKG=suitedock
+APP_ID=ai.storyteller.artcraft-launcher
+PKG=artcraft-launcher
 FLATHUB=https://dl.flathub.org/repo/flathub.flatpakrepo
 
 TEST=1
+OCI=0
 TARBALL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-test) TEST=0; shift ;;
+    --oci) OCI=1; shift ;;
     -h | --help) sed -n '2,14p' "$0"; exit 0 ;;
     -*) echo "unknown argument: $1" >&2; exit 2 ;;
     *) TARBALL="$1"; shift ;;
@@ -44,7 +46,7 @@ for tool in flatpak flatpak-builder; do
   command -v "$tool" >/dev/null || { echo "error: $tool not found (apt install flatpak flatpak-builder librsvg2-common)" >&2; exit 1; }
 done
 
-echo "==> SuiteDock $VERSION Flatpak bundle for $ARCH from $(basename "$TARBALL")"
+echo "==> ArtCraft Launcher $VERSION Flatpak bundle for $ARCH from $(basename "$TARBALL")"
 
 WORK="$CARGO_TARGET_DIR/flatpak-bundle"
 rm -rf "$WORK"
@@ -63,10 +65,17 @@ OUT="$DIST/$BASENAME.flatpak"
 flatpak build-bundle --runtime-repo="$FLATHUB" "$WORK/repo" "$OUT" "$APP_ID" stable
 echo "wrote $OUT"
 
+if [[ "$OCI" = 1 ]]; then
+  OUT_OCI="$DIST/$BASENAME-oci"
+  rm -rf "$OUT_OCI"
+  flatpak build-bundle --oci "$WORK/repo" "$OUT_OCI" "$APP_ID" stable
+  echo "wrote OCI layout to $OUT_OCI"
+fi
+
 if [[ "$TEST" = 1 ]]; then
   flatpak install --user -y --noninteractive --reinstall "$OUT"
   flatpak info --user "$APP_ID"
-  flatpak run --command=sh "$APP_ID" -c 'test -x /app/bin/suitedock && ls /app/share/applications /app/share/metainfo /app/share/icons/hicolor/scalable/apps'
+  flatpak run --command=sh "$APP_ID" -c 'test -x /app/bin/artcraft-launcher && ls /app/share/applications /app/share/metainfo /app/share/icons/hicolor/scalable/apps'
 fi
 echo "==> done"
 ls -lh "$OUT"

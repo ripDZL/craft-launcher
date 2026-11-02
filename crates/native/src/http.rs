@@ -8,9 +8,11 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-const USER_AGENT: &str = concat!("SuiteDock/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("ArtCraftLauncher/", env!("CARGO_PKG_VERSION"));
 /// Largest JSON or text answer we read.
 const MAX_SMALL: u64 = 4 << 20;
+/// Largest GitHub API answer we read: 100 releases of an app with 49 assets are about 10 MB.
+const MAX_API: u64 = 16 << 20;
 
 /// What a GET of a small resource produced.
 #[derive(Debug, PartialEq, Eq)]
@@ -126,7 +128,7 @@ impl Http {
             .new_agent();
         // An optional token raises GitHub's limit from 60 to 5000 requests an hour. Only ever sent
         // to api.github.com.
-        let token = std::env::var("SUITEDOCK_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let token = std::env::var("ARTCRAFT_LAUNCHER_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         Ok(Self { small, feed, no_redirect, download, direct, direct_download, token })
     }
 
@@ -147,7 +149,7 @@ impl Http {
         match status {
             200 => {
                 let etag = header("etag");
-                let text = read_text_capped(&mut resp, MAX_SMALL).map_err(|e| format!("unreadable answer from GitHub ({e})"))?;
+                let text = read_text_capped(&mut resp, MAX_API).map_err(|e| format!("unreadable answer from GitHub ({e})"))?;
                 Ok(Fetched::Body { text, etag })
             }
             304 => Ok(Fetched::NotModified),
@@ -964,6 +966,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_long_release_list_is_read_up_to_the_api_cap() {
+        // SolidCraft's list was 6.5 MB, past MAX_SMALL (#1021).
+        let long = vec![b' '; (MAX_SMALL as usize) + 1024];
+        let (url, _) = serve(long.clone(), vec![Reply::Full]);
+        let http = Http::new().unwrap();
+        assert!(matches!(http.get_api(&url, None), Ok(Fetched::Body { text, .. }) if text.len() == long.len()));
+        // Past MAX_API it is refused outright, not truncated and parsed.
+        let (url, _) = serve(vec![b' '; (MAX_API as usize) + 1024], vec![Reply::Full]);
+        let err = http.get_api(&url, None).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+    }
+
+    #[test]
     fn a_gzip_bomb_answer_is_refused_before_parsing() {
         // A few hundred bytes on the wire that decode to more than MAX_SMALL. ureq's own limit
         // sits below the transparent gzip decoder, so only a cap on the decoded stream (CWE-409)
@@ -987,7 +1002,7 @@ pub(crate) mod tests {
         enc.finish().unwrap()
     }
 
-    /// Live: a real Craft App release asset (`cargo test -p suitedock-native -- --ignored`).
+    /// Live: a real Craft App release asset (`cargo test -p artcraft-launcher-native -- --ignored`).
     #[test]
     #[ignore = "needs network access"]
     fn downloads_a_real_release_asset() {

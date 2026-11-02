@@ -1,5 +1,5 @@
 //! Drives the launcher UI against a fake backend: what's shown for each status, and which
-//! commands the buttons send. `SUITEDOCK_SNAPSHOTS=<dir>` also saves screenshots; run that
+//! commands the buttons send. `ARTCRAFT_LAUNCHER_SNAPSHOTS=<dir>` also saves screenshots; run that
 //! with `-- --test-threads=1`, as rendering on several threads at once can crash Vulkan loaders
 //! older than 1.4.350 (KhronosGroup/Vulkan-Loader#1863).
 
@@ -289,7 +289,7 @@ fn harness_full(
         Some(platform) => Box::new(PlatformFake { inner: fake, platform }),
         None => Box::new(fake),
     });
-    let settings = Settings { view, notify: false, show_social_links: true, ..Settings::default() };
+    let settings = Settings { view, notify: false, ..Settings::default() };
     // No `.wgpu()`: it gives every test its own GPU device, and those segfault on parallel test threads (see above).
     // The default renderer creates one only when a test renders.
     let harness = test_harness_builder(theme).with_size(egui::vec2(1180.0, 1200.0)).with_pixels_per_point(scale).with_theme(theme).build_ui_state(
@@ -315,11 +315,11 @@ fn harness_full(
     (harness, sent)
 }
 
-/// Save a PNG under `SUITEDOCK_SNAPSHOTS` when that is set. `name` is a test-owned file
+/// Save a PNG under `ARTCRAFT_LAUNCHER_SNAPSHOTS` when that is set. `name` is a test-owned file
 /// stem (the test names and sizes make each one unique), never a path: a separator is rejected so
 /// no caller can write outside the evidence directory.
 fn snapshot(h: &mut Harness<'_, Option<LauncherUi>>, name: &str) {
-    let Some(dir) = std::env::var_os("SUITEDOCK_SNAPSHOTS") else { return };
+    let Some(dir) = std::env::var_os("ARTCRAFT_LAUNCHER_SNAPSHOTS") else { return };
     assert!(
         !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != "..",
         "snapshot name must be one pathless file stem, got {name:?}"
@@ -354,8 +354,7 @@ fn folder_harness(picked: Rc<RefCell<Option<String>>>) -> (Harness<'static, Opti
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state =
-                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);
@@ -399,7 +398,7 @@ fn version_choices_have_room_and_nightly_scrolls_with_the_versions() {
     let releases: Vec<_> = (1..=25)
         .rev()
         .map(|v| {
-            let mut r = release("suitedock", &format!("0.{v}.0"), NOW);
+            let mut r = release("artcraft-launcher", &format!("0.{v}.0"), NOW);
             r.assets[0].sha256 = Some("0".repeat(64));
             r
         })
@@ -484,8 +483,7 @@ fn version_menu(latest: Release, answer: Vec<Release>) -> VersionsHarness {
     let mut h = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 1200.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state =
-                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut DummyHost);
@@ -688,8 +686,7 @@ fn the_install_folder_fields_default_to_the_hosts_answer() {
     let harness = test_harness_builder(egui::Theme::Dark).with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
-                *state =
-                    Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, show_social_links: true, ..Default::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(backend), Settings { notify: false, ..Default::default() }));
             }
             if let Some(launcher) = state {
                 launcher.logic(ui.ctx(), &mut host);
@@ -1149,7 +1146,7 @@ fn keeps_working_with_no_window_then_draws_in_a_new_one() {
     let backend =
         Fake { events: events(), sent: sent.clone(), manage: true, pictures: Rc::default(), asked: Vec::new(), clock: Rc::new(Cell::new(NOW)) };
     let windowless = egui::Context::default();
-    let mut ui = LauncherUi::new(&windowless, Box::new(backend), Settings { notify: false, show_social_links: true, ..Settings::default() });
+    let mut ui = LauncherUi::new(&windowless, Box::new(backend), Settings { notify: false, ..Settings::default() });
     // No window: the backend's news is still taken in.
     ui.logic(&windowless, &mut NoHost);
     assert!(sent.borrow().contains(&Command::CheckForUpdates { force: false }));
@@ -1330,8 +1327,8 @@ fn an_install_waiting_for_another_says_so_and_can_be_cancelled() {
 #[test]
 fn the_launcher_update_waiting_for_other_installs_can_be_cancelled() {
     let mut ev = events();
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
-    ev.push(Event::Progress { app: "suitedock".into(), phase: JobPhase::Waiting });
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
+    ev.push(Event::Progress { app: "artcraft-launcher".into(), phase: JobPhase::Waiting });
     let (mut h, sent) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
     h.run_steps(6);
     snapshot(&mut h, "grid-launcher-waiting-dark");
@@ -1339,15 +1336,15 @@ fn the_launcher_update_waiting_for_other_installs_can_be_cancelled() {
     sent.borrow_mut().clear();
     h.get_by_label("Cancel update").click();
     h.run_steps(2);
-    assert_eq!(*sent.borrow(), [Command::Cancel { app: "suitedock".into() }]);
+    assert_eq!(*sent.borrow(), [Command::Cancel { app: "artcraft-launcher".into() }]);
 }
 
 #[test]
 /// The launcher banner's Cancel crosses the action boundary once per visible frame.
 fn the_launcher_banner_cancel_is_sent_once_across_discarded_passes() {
     let mut ev = events();
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
-    ev.push(Event::Progress { app: "suitedock".into(), phase: JobPhase::Waiting });
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
+    ev.push(Event::Progress { app: "artcraft-launcher".into(), phase: JobPhase::Waiting });
     let (mut h, sent) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
     h.run_steps(6);
     let at = h.get_by_label("Cancel update").rect().center();
@@ -1368,9 +1365,9 @@ fn each_cancellation_says_what_it_called_off() {
     ev.push(Event::Progress { app: "lightcraft".into(), phase: JobPhase::Waiting });
     ev.push(finished("lightcraft", CANCELLED));
     // The launcher's own update, cancelled while it waited.
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
-    ev.push(Event::Progress { app: "suitedock".into(), phase: JobPhase::Waiting });
-    ev.push(finished("suitedock", CANCELLED));
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
+    ev.push(Event::Progress { app: "artcraft-launcher".into(), phase: JobPhase::Waiting });
+    ev.push(finished("artcraft-launcher", CANCELLED));
     // A download cancelled mid-way.
     ev.push(finished("filmcraft", CANCELLED));
     let (mut h, _) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
@@ -1537,8 +1534,43 @@ fn the_first_close_to_the_tray_is_explained_once() {
     l.hidden_to_tray(&mut host);
     assert!(l.settings.tray_hint_shown);
     assert_eq!(host.0.len(), 1, "{:?}", host.0);
-    assert_eq!(host.0[0].0, "SuiteDock is still running");
+    assert_eq!(host.0[0].0, "ArtCraft Launcher is still running");
     assert!(host.0[0].1.contains("tray icon"), "{}", host.0[0].1);
+}
+
+#[test]
+fn community_apps_can_be_hidden_and_restored_in_settings() {
+    for view in [ViewMode::Grid, ViewMode::Table] {
+        let (mut h, _) = harness(view, egui::Theme::Dark, true);
+        h.run_steps(6);
+        assert!(!h.state().as_ref().unwrap().settings.hide_community_apps);
+        assert!(h.query_by_label("SolidCraft details").is_some());
+        h.get_by_label("Settings").click();
+        h.run_steps(4);
+        h.get_by_label("Hide community apps").click();
+        h.run_steps(2);
+        assert!(h.state().as_ref().unwrap().settings.hide_community_apps);
+        h.get_by_label("Done").click();
+        h.run_steps(4);
+        assert!(h.query_by_label("SolidCraft details").is_none());
+        assert!(h.query_by_label("PhotoCraft details").is_some());
+        h.get_by_label("Settings").click();
+        h.run_steps(4);
+        h.get_by_label("Hide community apps").click();
+        h.run_steps(2);
+        h.get_by_label("Done").click();
+        h.run_steps(4);
+        assert!(h.query_by_label("SolidCraft details").is_some());
+    }
+}
+
+#[test]
+fn community_visibility_preference_round_trips_and_defaults_off_for_old_settings() {
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert!(!old.hide_community_apps);
+    let settings = Settings { hide_community_apps: true, ..old };
+    let restored: Settings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+    assert!(restored.hide_community_apps);
 }
 
 #[test]
@@ -1692,7 +1724,7 @@ fn hostile_release_asset_urls_never_reach_the_opener() {
     assert!(!opened.iter().any(|url| url.as_str() == HOSTILE), "a hostile card asset URL reached the opener: {opened:?}");
 
     let mut ev = events();
-    let mut launcher_release = release("suitedock", "0.2.0", NOW);
+    let mut launcher_release = release("artcraft-launcher", "0.2.0", NOW);
     launcher_release.assets[0].url = HOSTILE.to_string();
     ev.push(Event::LauncherUpdate(launcher_release));
     let (mut h, _) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, false, 1.0);
@@ -1710,8 +1742,7 @@ fn discord_link_opens_app_when_discord_is_installed() {
 }
 
 #[test]
-/// Background detection waits five minutes: it is not sent at startup or on every frame, and is
-/// sent once at the five-minute mark.
+/// Background app detection remains on its own five-minute cadence; release polling is separate.
 fn looks_again_at_installed_apps_every_few_minutes_not_every_frame() {
     let sent = Rc::new(RefCell::new(Vec::new()));
     let clock = Rc::new(Cell::new(NOW));
@@ -1722,7 +1753,7 @@ fn looks_again_at_installed_apps_every_few_minutes_not_every_frame() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -1754,7 +1785,7 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
     }
     let sent = Rc::new(RefCell::new(Vec::new()));
     let mut events = events();
-    events.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
+    events.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
     let shared_events = Rc::new(RefCell::new(Vec::new()));
     struct Scripted {
         inner: Fake,
@@ -1790,7 +1821,7 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut host);
@@ -1800,9 +1831,9 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
         None,
     );
     h.run_steps(6);
-    h.get_by_role_and_label(egui::accesskit::Role::Label, "SuiteDock 0.2.0 is available.");
+    h.get_by_role_and_label(egui::accesskit::Role::Label, "ArtCraft Launcher 0.2.0 is available.");
     assert_eq!(
-        h.query_all_by_label_contains("SuiteDock 0.2.0 is available").count(),
+        h.query_all_by_label_contains("ArtCraft Launcher 0.2.0 is available").count(),
         1,
         "the update title is announced once, not once by the icon and once by the heading"
     );
@@ -1810,7 +1841,9 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
     h.run_steps(2);
     assert!(sent.borrow().contains(&Command::UpdateLauncher));
     // Downloading: the banner shows progress instead of the button.
-    shared_events.borrow_mut().push(Event::Progress { app: "suitedock".into(), phase: JobPhase::Downloading { done: 5 << 20, total: 10 << 20 } });
+    shared_events
+        .borrow_mut()
+        .push(Event::Progress { app: "artcraft-launcher".into(), phase: JobPhase::Downloading { done: 5 << 20, total: 10 << 20 } });
     h.run_steps(3);
     assert!(h.query_by_label("Update and restart").is_none());
     assert!(!quit.get());
@@ -1825,13 +1858,13 @@ fn the_launcher_updates_itself_and_quits_to_restart() {
 /// toolbar banner.
 fn launcher_update_prompts_to_relaunch_with_updated_version() {
     let mut ev = events();
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
     let (mut h, _) = harness_with(ev, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
     h.run_steps(6);
     // Dialog pops up on launch with the update prompt
-    h.get_by_role_and_label(egui::accesskit::Role::Label, "SuiteDock 0.2.0 is available.");
+    h.get_by_role_and_label(egui::accesskit::Role::Label, "ArtCraft Launcher 0.2.0 is available.");
     assert_eq!(
-        h.query_all_by_label_contains("SuiteDock 0.2.0 is available").count(),
+        h.query_all_by_label_contains("ArtCraft Launcher 0.2.0 is available").count(),
         1,
         "the update title is announced once, not once by the icon and once by the heading"
     );
@@ -1881,7 +1914,7 @@ fn feed_announcements_and_alerts_show_until_dismissed() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -1908,11 +1941,11 @@ fn feed_announcements_and_alerts_show_until_dismissed() {
 }
 
 #[test]
-fn automatic_checks_run_every_five_minutes() {
+fn automatic_checks_run_every_twelve_minutes() {
     use artcraft_launcher_ui_egui::settings::CheckEvery;
-    assert_eq!(Settings::default().check_every.seconds(), Some(300));
+    assert_eq!(Settings::default().check_every.seconds(), Some(720));
     // Older saved choices still load, and mean "automatically" now.
-    assert_eq!(CheckEvery::Day.seconds(), Some(300));
+    assert_eq!(CheckEvery::Day.seconds(), Some(720));
     assert_eq!(CheckEvery::Never.seconds(), None);
 }
 
@@ -1921,7 +1954,7 @@ fn automatic_checks_run_every_five_minutes() {
 /// `UpdateLauncher`.
 fn automatic_updates_queue_installs_for_outdated_apps_and_launcher() {
     let mut ev = events();
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
     let sent = Rc::new(RefCell::new(Vec::new()));
     let sent2 = sent.clone();
     let mut backend =
@@ -1951,7 +1984,7 @@ fn automatic_updates_queue_installs_for_outdated_apps_and_launcher() {
 /// With auto-update off, no app install or launcher update is queued.
 fn automatic_updates_are_disabled_by_default() {
     let mut ev = events();
-    ev.push(Event::LauncherUpdate(release("suitedock", "0.2.0", NOW)));
+    ev.push(Event::LauncherUpdate(release("artcraft-launcher", "0.2.0", NOW)));
     let sent = Rc::new(RefCell::new(Vec::new()));
     let sent2 = sent.clone();
     let mut backend =
@@ -1990,7 +2023,7 @@ fn the_footer_names_the_services_behind_what_is_on_screen() {
                 if state.is_none()
                     && let Some(b) = backend.take()
                 {
-                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
                 }
                 if let Some(l) = state.as_mut() {
                     l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -2042,7 +2075,7 @@ fn custom_title_bar_has_window_buttons() {
             if state.is_none()
                 && let Some(b) = backend.take()
             {
-                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
             }
             if let Some(l) = state.as_mut() {
                 l.logic(&ui.ctx().clone(), &mut FramelessHost);
@@ -2402,7 +2435,7 @@ fn the_rate_limit_notice_never_runs_under_the_footer_links() {
                 if state.is_none()
                     && let Some(b) = backend.take()
                 {
-                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, show_social_links: true, ..Settings::default() }));
+                    *state = Some(LauncherUi::new(ui.ctx(), Box::new(b), Settings { notify: false, ..Settings::default() }));
                 }
                 if let Some(l) = state.as_mut() {
                     l.logic(&ui.ctx().clone(), &mut NoHost);
@@ -2469,23 +2502,6 @@ fn the_toolbar_has_no_filter_dropdown() {
     // Only the sort dropdown is left.
     assert_eq!(h.query_all_by_role(egui::accesskit::Role::ComboBox).count(), 1);
     assert_eq!(h.state().as_ref().unwrap().settings.filter, Filter::All);
-}
-
-#[test]
-fn community_links_can_be_hidden_without_removing_settings_links() {
-    let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
-    h.run_steps(6);
-    if let Some(ui) = h.state_mut().as_mut() {
-        ui.settings.show_social_links = false;
-    }
-    h.run_steps(3);
-    assert!(h.query_by_label("Discord").is_none(), "footer community links are hidden");
-    h.get_by_label("Settings").click();
-    h.run_steps(3);
-    h.get_by_label("Join the Discord");
-    h.get_by_label("Show community and social links outside Settings").click();
-    h.run_steps(3);
-    assert!(h.query_all_by_label_contains("Discord").count() >= 2, "Settings and footer links are both visible after enabling");
 }
 
 #[test]

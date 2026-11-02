@@ -75,10 +75,10 @@ impl CheckEvery {
     }
 
     /// How often to look. Checks ask ArtCraft's release feed (one cheap request; GitHub only as a
-    /// fallback), so automatic checks run every five minutes.
+    /// fallback), so automatic checks run every twelve minutes to reduce GitHub API traffic.
     pub fn seconds(self) -> Option<i64> {
         match self {
-            Self::Hour | Self::FourHours | Self::Day => Some(5 * 60),
+            Self::Hour | Self::FourHours | Self::Day => Some(12 * 60),
             Self::Never => None,
         }
     }
@@ -108,8 +108,6 @@ pub struct Settings {
     /// Show a system notification when an installed app has an update.
     pub notify: bool,
     pub prereleases: bool,
-    /// Show general ArtCraft community/social links outside Settings (footer and tray).
-    pub show_social_links: bool,
     /// Version track per app. Missing entries follow stable releases.
     pub versions: BTreeMap<String, artcraft_launcher_core::protocol::VersionTrack>,
     pub launcher_version: artcraft_launcher_core::protocol::VersionTrack,
@@ -121,6 +119,8 @@ pub struct Settings {
     pub notified: BTreeMap<String, String>,
     /// Unix seconds of the last finished check.
     pub last_check: Option<i64>,
+    /// Hide community apps from the catalog without changing their installation or update settings.
+    pub hide_community_apps: bool,
     /// Catalog ids of apps hidden from the main lists (`photocraft`, …).
     pub hidden: std::collections::BTreeSet<String>,
     /// The one-time notice that closing the window keeps the launcher in the tray has been shown.
@@ -202,13 +202,13 @@ impl Default for Settings {
             auto_update: false,
             notify: true,
             prereleases: false,
-            show_social_links: false,
             versions: BTreeMap::new(),
             launcher_version: Default::default(),
             preferred_kinds: default_preferred_kinds(),
             dismissed_notices: std::collections::BTreeSet::new(),
             notified: BTreeMap::new(),
             last_check: None,
+            hide_community_apps: false,
             hidden: std::collections::BTreeSet::new(),
             tray_hint_shown: false,
             launches: BTreeMap::new(),
