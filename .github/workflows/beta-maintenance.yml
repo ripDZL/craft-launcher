@@ -37,10 +37,10 @@ jobs:
           fi
       - name: Create source archive
         shell: bash
-        run: git archive --format=zip --prefix=SuiteDock-beta/ -o SuiteDock-beta-2026-10-30.zip HEAD
+        run: git archive --format=zip --prefix=SuiteDock-beta/ -o SuiteDock-beta-v0.13.0-2026-11-02.zip HEAD
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: SuiteDock-beta-source
-          path: SuiteDock-beta-2026-10-30.zip
+          name: SuiteDock-beta-v0.13.0-source
+          path: SuiteDock-beta-v0.13.0-2026-11-02.zip
           if-no-files-found: error
           compression-level: 0
