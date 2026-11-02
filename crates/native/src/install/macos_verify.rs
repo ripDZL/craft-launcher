@@ -247,7 +247,7 @@ mod tests {
     #[test]
     #[ignore = "needs the independently staged real release; no app execution or swap"]
     fn mac_install_real_release_passes_the_production_verifier() {
-        let bundle = std::env::var_os("ARTCRAFT_LAUNCHER_TEST_STAGED_APP").expect("set the owned staged release path");
+        let bundle = std::env::var_os("SUITEDOCK_TEST_STAGED_APP").expect("set the owned staged release path");
         verify_with(solidcraft(), Path::new(&bundle), "G5QA5U5X2S", crate::process::run).unwrap();
     }
 }
