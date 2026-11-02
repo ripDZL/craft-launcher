@@ -7,7 +7,7 @@ version = "0.13.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
-repository = "https://github.com/storytold/craft-launcher"
+repository = "https://github.com/ripDZL/craft-launcher"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -108,6 +108,9 @@ pub struct Settings {
     /// Show a system notification when an installed app has an update.
     pub notify: bool,
     pub prereleases: bool,
+    /// Show community/social links outside Settings (footer and system tray).
+    #[serde(default)]
+    pub show_social_links: bool,
     /// Version track per app. Missing entries follow stable releases.
     pub versions: BTreeMap<String, artcraft_launcher_core::protocol::VersionTrack>,
     pub launcher_version: artcraft_launcher_core::protocol::VersionTrack,
@@ -202,6 +205,7 @@ impl Default for Settings {
             auto_update: false,
             notify: true,
             prereleases: false,
+            show_social_links: false,
             versions: BTreeMap::new(),
             launcher_version: Default::default(),
             preferred_kinds: default_preferred_kinds(),
