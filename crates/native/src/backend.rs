@@ -64,7 +64,7 @@ struct Shared {
     /// A detection pass is running; another request waits for the next one.
     detecting: AtomicBool,
     last_check: Mutex<Option<i64>>,
-    /// The newer ArtCraft Launcher release, once a check has found one.
+    /// The newer SuiteDock release, once a check has found one.
     launcher_release: Mutex<Option<Release>>,
     /// How this launcher is installed, when it can replace itself. Worked out on the check thread
     /// just before a newer launcher is announced: finding out can ask the host's Flatpak, which
@@ -142,7 +142,7 @@ impl NativeBackend {
         let waker: Waker = Arc::new(waker);
         let paths = Paths::new().unwrap_or_else(|e| {
             log::error!("{e}; keeping files in the temporary folder");
-            Paths::under(&std::env::temp_dir().join("artcraft-launcher"))
+            Paths::under(&std::env::temp_dir().join("suitedock"))
         });
         let http = match Http::new() {
             Ok(h) => Some(h),
@@ -322,7 +322,7 @@ impl NativeBackend {
             restarting
         };
         if restarting {
-            let result = Err("ArtCraft Launcher is restarting to finish its update. Try again once it's back.".into());
+            let result = Err("SuiteDock is restarting to finish its update. Try again once it's back.".into());
             self.shared.emit(Event::JobFinished { app: app.id.to_string(), result });
             return;
         }
@@ -406,7 +406,7 @@ impl NativeBackend {
         let (Some(install), Some(platform)) = (self.shared.self_install.get().cloned().flatten(), self.platform) else {
             self.shared.emit(Event::JobFinished {
                 app: id,
-                result: Err("this copy of ArtCraft Launcher can't update itself; download the new version instead".into()),
+                result: Err("this copy of SuiteDock can't update itself; download the new version instead".into()),
             });
             return;
         };
@@ -670,7 +670,7 @@ fn restart_blocked(mut busy: Vec<&str>) -> String {
         _ => (busy.join(", "), "were", "them"),
     };
     format!(
-        "ArtCraft Launcher didn't restart to update: {names} {were} still installing. Answer or close any password prompt, \
+        "SuiteDock didn't restart to update: {names} {were} still installing. Answer or close any password prompt, \
          let {them} finish or cancel {them}, then press Update and restart again."
     )
 }
@@ -1003,10 +1003,10 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
     if asked { FeedFetch::Failed } else { FeedFetch::Held }
 }
 
-/// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at a staging server or a local copy
+/// The feed's address. `SUITEDOCK_FEED_URL` points at a staging server or a local copy
 /// (only `https://`, or plain `http://` on localhost).
 fn feed_url() -> String {
-    std::env::var("ARTCRAFT_LAUNCHER_FEED_URL")
+    std::env::var("SUITEDOCK_FEED_URL")
         .ok()
         .filter(|u| feed_url_override_allowed(u, cfg!(feature = "local-mirror")))
         .unwrap_or_else(|| artcraft_launcher_core::feed::FEED_URL.to_string())
@@ -1018,7 +1018,7 @@ fn feed_url_override_allowed(url: &str, allow_https: bool) -> bool {
 
 use crate::http::is_loopback;
 
-/// `ARTCRAFT_LAUNCHER_DOWNLOAD_BASE`: a mirror on this machine (`cargo xtask local serve`) that
+/// `SUITEDOCK_DOWNLOAD_BASE`: a mirror on this machine (`cargo xtask local serve`) that
 /// serves `release_info.json` and the builds it lists. While it's set, releases come only from
 /// there (never GitHub or ArtCraft's API), and its download links are trusted. Loopback only, so
 /// nothing but the developer's own builds can be installed this way, and only in builds with the
@@ -1027,21 +1027,21 @@ fn local_mirror() -> Option<String> {
     if !cfg!(feature = "local-mirror") {
         return None;
     }
-    let base = std::env::var("ARTCRAFT_LAUNCHER_DOWNLOAD_BASE").ok()?;
+    let base = std::env::var("SUITEDOCK_DOWNLOAD_BASE").ok()?;
     let base = base.trim();
     if !is_loopback(base) || base.contains(['?', '#', '\\']) {
         log::warn!(
-            "ignoring ARTCRAFT_LAUNCHER_DOWNLOAD_BASE={base}: only http://127.0.0.1:<port>/, http://localhost:<port>/ or http://[::1]:<port>/"
+            "ignoring SUITEDOCK_DOWNLOAD_BASE={base}: only http://127.0.0.1:<port>/, http://localhost:<port>/ or http://[::1]:<port>/"
         );
         return None;
     }
     Some(if base.ends_with('/') { base.to_string() } else { format!("{base}/") })
 }
 
-/// The local mirror's feed: `ARTCRAFT_LAUNCHER_FEED_URL` if set, else `release_info.json` beside
+/// The local mirror's feed: `SUITEDOCK_FEED_URL` if set, else `release_info.json` beside
 /// the builds. Asked every check (it's on this machine), and never saved over ArtCraft's.
 fn local_feed(http: &Http, base: &str) -> Option<Feed> {
-    let url = std::env::var("ARTCRAFT_LAUNCHER_FEED_URL").ok().filter(|u| is_loopback(u)).unwrap_or_else(|| format!("{base}release_info.json"));
+    let url = std::env::var("SUITEDOCK_FEED_URL").ok().filter(|u| is_loopback(u)).unwrap_or_else(|| format!("{base}release_info.json"));
     match http.get_feed(&url) {
         Ok(body) => {
             let feed = Feed::parse(&body).map(|f| f.with_mirror(base));

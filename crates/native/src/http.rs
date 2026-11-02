@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-const USER_AGENT: &str = concat!("ArtCraftLauncher/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("SuiteDock/", env!("CARGO_PKG_VERSION"));
 /// Largest JSON or text answer we read.
 const MAX_SMALL: u64 = 4 << 20;
 /// Largest GitHub API answer we read: 100 releases of an app with 49 assets are about 10 MB.
@@ -128,7 +128,7 @@ impl Http {
             .new_agent();
         // An optional token raises GitHub's limit from 60 to 5000 requests an hour. Only ever sent
         // to api.github.com.
-        let token = std::env::var("ARTCRAFT_LAUNCHER_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let token = std::env::var("SUITEDOCK_GITHUB_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         Ok(Self { small, feed, no_redirect, download, direct, direct_download, token })
     }
 
