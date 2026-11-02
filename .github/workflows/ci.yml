@@ -46,5 +46,5 @@ jobs:
       craft-fonts-ref: ""
       tools: trunk@0.21.14
       command: |
-        cargo clippy -p artcraft-launcher-core -p artcraft-launcher-web --target wasm32-unknown-unknown --locked -- -D warnings
+        cargo clippy -p artcraft-launcher-core -p suitedock-web --target wasm32-unknown-unknown --locked -- -D warnings
         packaging/web/package.sh
