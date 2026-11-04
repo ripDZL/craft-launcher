@@ -8,7 +8,7 @@
       -culture en-US -loc suitedock.en-us.wxl -d Version=1.2.3 -d DisplayVersion=1.2.3-rc.1
       -d BinDir=... -d IconPath=... -d BannerBmp=... -d DialogBmp=... -o out.msi
 
-  Per-user install (no UAC prompt), by default into %LOCALAPPDATA%\Programs\SuiteDock, so
+  Per-user install (no UAC prompt), by default into %LOCALAPPDATA%\Programs\ArtCraft\Launcher, so
   the launcher can update itself without elevation, plus a Start Menu shortcut. The shortcut
   carries the AppUserModelID io.github.ripdzl.suitedock, which Windows needs to show toast
   notifications from an unpackaged app and to group the taskbar button. No file associations.
@@ -28,29 +28,36 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
       Name="SuiteDock"
-      Manufacturer="ripDZL"
+      Manufacturer="SuiteDock contributors"
       Version="$(var.Version)"
-      UpgradeCode="BD9222C7-B219-543E-8140-6870F38ED819"
+      UpgradeCode="1AC08DBF-D4CF-4BA4-A81E-CAA5C1004974"
       Scope="perUser"
       Compressed="yes"
       Language="1033">
-    <SummaryInformation Description="SuiteDock: install and update the Craft App Suite" Manufacturer="ripDZL" />
+    <SummaryInformation Description="SuiteDock: install and update the Craft App Suite" Manufacturer="SuiteDock contributors" />
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
         DowngradeErrorMessage="A newer version of SuiteDock is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <!-- MSI caches this icon using its Id as the filename; keep the .exe extension (ICE50). -->
+    <!-- The Apps & features icon only. MSI caches it under %APPDATA%\Microsoft\Installer\{ProductCode},
+         using its Id as the filename (keep the .exe extension, ICE50). Every update is a major
+         upgrade with a new ProductCode that deletes the old folder, so the shortcuts must not use
+         it: a taskbar pin is a copy of the shortcut, an update never refreshes it, and its icon
+         went blank once the old folder was gone. The shortcuts take the exe's own icon instead
+         (build.rs embeds it), at a path every update keeps. -->
     <Icon Id="SuiteDockIcon.exe" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="SuiteDockIcon.exe" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/ripDZL/craft-launcher" />
+    <Property Id="ARPURLINFOABOUT" Value="https://getartcraft.com/apps" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/ripDZL/craft-launcher/releases" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/ripDZL/craft-launcher/issues" />
+    <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="LocalProgramsFolder" Name="Programs">
-        <Directory Id="INSTALLFOLDER" Name="SuiteDock" />
+        <Directory Id="CraftSuiteFolder" Name="ArtCraft">
+          <Directory Id="INSTALLFOLDER" Name="Launcher" />
+        </Directory>
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
@@ -58,9 +65,12 @@
 
     <!-- An update installs where the user put the previous version (recorded by
          SuiteDockApp below; every version since 0.1.0 records it). -->
-    <Property Id="INSTALLFOLDER">
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="PREVIOUSINSTALLFOLDER" Secure="yes">
       <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\ripDZL\SuiteDock" Name="InstallDir" Type="raw" />
     </Property>
+    <SetProperty Id="INSTALLFOLDER" Action="CraftRestoreLauncherFolder" Value="[PREVIOUSINSTALLFOLDER]"
+        Before="CostInitialize" Sequence="both" Condition="PREVIOUSINSTALLFOLDER AND NOT INSTALLFOLDER" />
 
     <!-- The desktop shortcut: the folder page's box sets INSTALLDESKTOPSHORTCUT to 1. It starts
          ticked on a first install; an update keeps what the user chose last time, and an update
@@ -82,16 +92,16 @@
     </Feature>
 
     <!-- The setup wizard: WixUI_InstallDir without its licence page, and with our folder page
-         (ArtCraftInstallDirDlg: the stock one plus the desktop-shortcut box) in place of the stock
+         (SuiteDockInstallDirDlg: the stock one plus the desktop-shortcut box) in place of the stock
          one. A later NewDialog on the same button wins. -->
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <UI>
-      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="ArtCraftInstallDirDlg" Order="2" Condition="NOT Installed" />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ArtCraftInstallDirDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="SuiteDockInstallDirDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="SuiteDockInstallDirDlg" Order="2" Condition="NOT Installed" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchSuiteDock"
           Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
 
-      <Dialog Id="ArtCraftInstallDirDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+      <Dialog Id="SuiteDockInstallDirDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
           <!-- As WixUI_InstallDir does for its own folder page: take the folder, check it, go on. -->
           <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
@@ -118,7 +128,7 @@
           <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
           <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2" />
         </Control>
-        <Control Id="PerUserNote" Type="Text" X="20" Y="146" Width="330" Height="24" NoPrefix="yes" Text="!(loc.ArtCraftInstallDirNote)" />
+        <Control Id="PerUserNote" Type="Text" X="20" Y="146" Width="330" Height="24" NoPrefix="yes" Text="!(loc.SuiteDockInstallDirNote)" />
 
         <Control Id="DesktopShortcut" Type="CheckBox" X="20" Y="186" Width="330" Height="17" Property="INSTALLDESKTOPSHORTCUT" CheckBoxValue="1" Text="!(loc.ArtCraftDesktopShortcut)" />
       </Dialog>
@@ -142,7 +152,8 @@
 
   <Fragment>
     <ComponentGroup Id="SuiteDockFiles">
-      <Component Id="SuiteDockApp" Directory="INSTALLFOLDER" Guid="CA82CFDC-68A6-5507-B73E-12A87E1B4F48">
+      <Component Id="SuiteDockApp" Directory="INSTALLFOLDER" Guid="55DCC431-EBEF-4C11-BABB-6D78CE0ECF4E">
+        <File Id="SuiteDockNotice" Source="$(var.BinDir)\NOTICE" KeyPath="no" />
         <File Id="SuiteDockExe" Source="$(var.BinDir)\suitedock.exe" KeyPath="no" />
         <!-- Read back by the next version's installer and by the launcher (self_update.rs). -->
         <RegistryValue Root="HKCU" Key="Software\ripDZL\SuiteDock" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
@@ -150,26 +161,25 @@
         <!-- Win+R "suitedock". -->
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\suitedock.exe" Value="[#SuiteDockExe]" Type="string" />
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveSuiteFolder" Directory="CraftSuiteFolder" On="uninstall" />
         <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
       </Component>
 
-      <Component Id="SuiteDockShortcut" Directory="ProgramMenuFolder" Guid="1E613443-E8B4-504A-8FD8-537F585CD596">
+      <Component Id="SuiteDockShortcut" Directory="ProgramMenuFolder" Guid="870F3DFA-BC0F-497F-85D5-A361B04826AF">
         <Shortcut Id="StartMenuShortcut" Name="SuiteDock"
             Description="Install and update the Craft App Suite"
-            Target="[#SuiteDockExe]" WorkingDirectory="INSTALLFOLDER"
-            Icon="SuiteDockIcon.exe" IconIndex="0">
+            Target="[#SuiteDockExe]" WorkingDirectory="INSTALLFOLDER">
           <ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.ripdzl.suitedock" />
         </Shortcut>
         <RegistryValue Root="HKCU" Key="Software\ripDZL\SuiteDock" Name="StartMenuShortcut" Value="1" Type="integer" KeyPath="yes" />
       </Component>
 
       <!-- Only when the folder page's box is ticked; removed on uninstall like everything else. -->
-      <Component Id="SuiteDockDesktopShortcut" Directory="DesktopFolder" Guid="5BE207D8-A033-5E66-87E1-1ED470CBD9F2"
+      <Component Id="SuiteDockDesktopShortcut" Directory="DesktopFolder" Guid="CF06DCF3-BE5A-4A2B-B3BF-F553CC6E5D60"
           Condition="INSTALLDESKTOPSHORTCUT = &quot;1&quot;">
         <Shortcut Id="DesktopShortcut" Name="SuiteDock"
             Description="Install and update the Craft App Suite"
-            Target="[#SuiteDockExe]" WorkingDirectory="INSTALLFOLDER"
-            Icon="SuiteDockIcon.exe" IconIndex="0">
+            Target="[#SuiteDockExe]" WorkingDirectory="INSTALLFOLDER">
           <ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.ripdzl.suitedock" />
         </Shortcut>
         <RegistryValue Root="HKCU" Key="Software\ripDZL\SuiteDock" Name="DesktopShortcut" Value="1" Type="integer" KeyPath="yes" />

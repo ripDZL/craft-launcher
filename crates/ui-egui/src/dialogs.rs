@@ -1,31 +1,56 @@
 //! Modal dialogs: release notes, uninstall confirmation, settings.
 
+use crate::i18n::fmt;
+use artcraft_launcher_core::Os;
+use artcraft_launcher_core::protocol::Command;
 use egui::{RichText, vec2};
-use suitedock_core::protocol::Command;
-use suitedock_core::{Os, PackageKind, time};
 
 use crate::app::{Dialog, Host, LauncherUi};
-use crate::settings::CheckEvery;
-use crate::theme::{self, ThemeChoice, Tokens};
-use crate::widgets::{self, Cell, Kind};
+use crate::theme::{self, Tokens};
+use crate::widgets::{self, Kind};
 
 impl LauncherUi {
+    /// Draws the current modal and writes any edits made in it back to `self.dialog`. With no
+    /// dialog it shows the next unacknowledged feed alert. Each dialog kind gets its own modal id
+    /// so a smaller prompt cannot inherit a taller one's last size, and closing (button, Escape or
+    /// a click outside) discards the dialog.
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context, host: &mut dyn Host) {
-        let Some(dialog) = self.dialog.clone() else {
+        let Some(mut dialog) = self.dialog.clone() else {
             self.alert_popup(ctx);
             return;
         };
         let t = Tokens::get(ctx);
-        let modal = egui::Modal::new(egui::Id::new("dialog"))
-            .frame(egui::Frame::new().fill(t.bg).stroke(egui::Stroke::new(1.0, t.line_strong)).shadow(theme::shadow(&t)).inner_margin(24));
+        // An area is laid out in the size it had last frame, so dialogs can't share one id: the
+        // uninstall prompt would open as tall as Settings and never shrink (#88).
+        // The large dialogs run their header to the card's edges; the small prompts keep a margin.
+        let large = matches!(dialog, Dialog::Settings | Dialog::Notes(_));
+        let modal = egui::Modal::new(egui::Id::unique("dialog").with(dialog.key())).frame(if large {
+            crate::sheet::frame(&t)
+        } else {
+            egui::Frame::new().fill(t.bg).stroke(egui::Stroke::new(1.0, t.line_strong)).shadow(theme::shadow(&t)).inner_margin(theme::PAD as i8)
+        });
         let mut close = false;
-        let response = match &dialog {
+        let response = match &mut dialog {
             Dialog::Notes(id) => modal.show(ctx, |ui| close = self.notes_dialog(ui, id)),
             Dialog::ConfirmUninstall(id) => modal.show(ctx, |ui| close = self.uninstall_dialog(ui, id)),
+            Dialog::Install { app, folder } => modal.show(ctx, |ui| close = self.install_dialog(ui, app, folder, host)),
+            Dialog::Replace { app, path } => modal.show(ctx, |ui| close = self.replace_dialog(ui, app, path)),
             Dialog::Settings => modal.show(ctx, |ui| close = self.settings_dialog(ui, host)),
+            Dialog::LauncherUpdate(r) => modal.show(ctx, |ui| close = self.launcher_update_dialog(ui, r)),
+            Dialog::Versions(id) => modal.show(ctx, |ui| close = self.version_dialog(ui, id)),
         };
+        if self.dialog.as_ref().is_some_and(|active| active.key() != dialog.key()) {
+            // A control inside a dialog opened a different one; don't restore the old dialog.
+            return;
+        }
         if close || response.should_close() {
             self.dialog = None;
+            if matches!(dialog, Dialog::Versions(_)) {
+                // Close, Escape or a click outside: a version chosen there is dropped.
+                self.revert_version_choice();
+            }
+        } else {
+            self.dialog = Some(dialog);
         }
     }
 
@@ -33,8 +58,9 @@ impl LauncherUi {
     fn alert_popup(&mut self, ctx: &egui::Context) {
         let Some(alert) = self.alerts.iter().find(|a| !self.settings.dismissed_notices.contains(&a.id)).cloned() else { return };
         let t = Tokens::get(ctx);
-        let modal = egui::Modal::new(egui::Id::new("feed_alert"))
-            .frame(egui::Frame::new().fill(t.bg).stroke(egui::Stroke::new(1.0, t.line_strong)).shadow(theme::shadow(&t)).inner_margin(24));
+        let modal = egui::Modal::new(egui::Id::unique("feed_alert").with(&alert.id)).frame(
+            egui::Frame::new().fill(t.bg).stroke(egui::Stroke::new(1.0, t.line_strong)).shadow(theme::shadow(&t)).inner_margin(theme::PAD as i8),
+        );
         let mut ok = false;
         modal.show(ctx, |ui| {
             ui.set_width(440.0f32.min(ctx.content_rect().width() - 80.0));
@@ -44,13 +70,16 @@ impl LauncherUi {
                 ui.add(egui::Label::new(RichText::new(&alert.body).color(t.muted)).wrap());
             });
             ui.add_space(14.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ok = widgets::button(ui, "OK", Kind::Primary, 90.0).clicked();
-                if let Some(link) = &alert.link
-                    && widgets::button(ui, "Open link", Kind::Secondary, 110.0).on_hover_text(link.as_str()).clicked()
-                {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(link.clone()));
-                }
+            // A row: a right-to-left layout straight in the column would fill the height left.
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ok = widgets::button(ui, tl!("OK"), Kind::Primary, 90.0).clicked();
+                    if let Some(link) = &alert.link
+                        && widgets::button(ui, tl!("Open link"), Kind::Secondary, 110.0).on_hover_text(link.as_str()).clicked()
+                    {
+                        widgets::open_external_link(ui.ctx(), link);
+                    }
+                });
             });
         });
         // Only OK acknowledges it: Escape or a click outside leaves it for later.
@@ -59,16 +88,20 @@ impl LauncherUi {
         }
     }
 
+    /// Draws the optional icon beside a heading and an optional subtitle. The icon is decorative so
+    /// assistive technology hears the title once, and an empty subtitle is omitted.
     fn title(ui: &mut egui::Ui, icon: Option<egui::ImageSource<'static>>, title: &str, subtitle: &str) {
         let t = Tokens::get(ui.ctx());
         ui.horizontal(|ui| {
             if let Some(icon) = icon {
+                // The heading beside it carries the title; an icon with the same accessible
+                // name would announce the dialog title twice.
                 ui.add(egui::Image::new(icon).fit_to_exact_size(vec2(40.0, 40.0)));
             }
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                ui.label(widgets::heading(title, 22.0, t.ink_strong));
+                ui.label(widgets::heading(title, theme::DIALOG_TITLE, t.ink_strong));
                 if !subtitle.is_empty() {
                     widgets::hud(ui, subtitle, t.faint);
                 }
@@ -77,169 +110,205 @@ impl LauncherUi {
         ui.add_space(14.0);
     }
 
+    /// An app's release notes: a large card like the app page, the notes in a scrolling body.
     fn notes_dialog(&mut self, ui: &mut egui::Ui, id: &str) -> bool {
         let Some(entry) = self.entry(id).cloned() else { return true };
         let Some(release) = entry.release().cloned() else { return true };
-        ui.set_width(560.0f32.min(ui.ctx().content_rect().width() - 80.0));
-        let date = release.published_at.map(|d| format!("Released {}", time::format_date(d))).unwrap_or_default();
-        Self::title(ui, crate::icons::app(id), &format!("{} {}", entry.app.name, release.version_label()), &date);
-        egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() * 0.6).show(ui, |ui| {
-            if release.notes.is_empty() {
-                ui.label("These notes weren't fetched (GitHub's request limit was reached). They're on the release page.");
-            } else {
-                crate::notes::show(ui, &release.notes);
-            }
+        let t = Tokens::get(ui.ctx());
+        let size = crate::sheet::size(ui.ctx(), vec2(880.0, 760.0));
+        ui.set_width(size.x);
+        ui.set_max_height(size.y);
+        let date = release.published_at.map(|d| fmt(tl!("Released {date}"), &[("date", &crate::views::date_text(d))])).unwrap_or_default();
+        let hero_h = crate::sheet::hero(ui, crate::icons::app(id), &format!("{} {}", entry.app.name, release.version_label()), &date, |_| {});
+        let footer_h = theme::CONTROL_H + 32.0;
+        let body_h = (size.y - hero_h - footer_h - 2.0).max(0.0);
+        let saved = crate::sheet::accent_scroll(ui, &t, t.accent);
+        egui::ScrollArea::vertical().id_salt("notes-body").max_height(body_h).auto_shrink([false, true]).show(ui, |ui| {
+            *ui.visuals_mut() = saved;
+            egui::Frame::new().inner_margin(egui::Margin::same(theme::PAD as i8)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if release.notes.is_empty() {
+                    ui.label(tl!("These notes weren't fetched (GitHub's request limit was reached). They're on the release page."));
+                } else {
+                    crate::notes::show_scaled(ui, &release.notes, self.notes_zoom);
+                }
+            });
         });
-        ui.add_space(12.0);
+        ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), t.hairline());
         let mut close = false;
-        ui.horizontal(|ui| {
-            widgets::hud_link(ui, "Open on GitHub", &release.html_url);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close = widgets::button(ui, "Close", Kind::Secondary, 90.0).clicked();
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(theme::PAD as i8, 16)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                widgets::hud_link(ui, tl!("Open on GitHub"), &release.html_url);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = widgets::button(ui, tl!("Close"), Kind::Secondary, 90.0).clicked();
+                });
             });
         });
         close
     }
 
+    /// Offers a new launcher version and returns whether the dialog should close. With self-update
+    /// it queues `UpdateLauncher` and closes; otherwise it opens the platform download (or the
+    /// release page) and closes. "Later" closes without doing either.
+    fn launcher_update_dialog(&mut self, ui: &mut egui::Ui, r: &artcraft_launcher_core::Release) -> bool {
+        let t = Tokens::get(ui.ctx());
+        ui.set_width(480.0f32.min(ui.ctx().content_rect().width() - 80.0));
+        let title = fmt(tl!("SuiteDock {version} is available."), &[("version", &r.version_label())]);
+        Self::title(ui, Some(crate::icons::suitedock_mark()), &title, "");
+        let message = if self.caps.self_update {
+            tl!("A new version is available. Would you like to relaunch with the updated version?")
+        } else {
+            tl!("A new version is available. Download it to replace this version?")
+        };
+        ui.label(RichText::new(message).color(t.muted));
+        ui.add_space(14.0);
+        let mut close = false;
+        ui.horizontal(|ui| {
+            widgets::hud_link(ui, tl!("What's new"), &r.html_url);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.caps.self_update {
+                    if widgets::button(ui, tl!("Update and restart"), Kind::Primary, 0.0)
+                        .on_hover_text(tl!("Downloads the new version, replaces this one and opens it again"))
+                        .clicked()
+                    {
+                        self.act_command(Command::UpdateLauncher);
+                        close = true;
+                    }
+                } else {
+                    let url = self
+                        .platform
+                        .and_then(|p| crate::views::launcher_download(r, p, crate::settings::is_flatpak_sandbox()))
+                        .unwrap_or_else(|| r.html_url.clone());
+                    if widgets::button(ui, tl!("Download"), Kind::Primary, 0.0).clicked() {
+                        widgets::open_external_link(ui.ctx(), &url);
+                        close = true;
+                    }
+                }
+                if widgets::button(ui, tl!("Later"), Kind::Secondary, 80.0).clicked() {
+                    close = true;
+                }
+            });
+        });
+        close
+    }
+
+    /// Confirms removing an installed app and returns `true` when the dialog should close, including
+    /// when the app entry has disappeared. It queues `Uninstall` only on confirmation and explains
+    /// the removal differently for each install source.
     fn uninstall_dialog(&mut self, ui: &mut egui::Ui, id: &str) -> bool {
         let Some(entry) = self.entry(id).cloned() else { return true };
         let t = Tokens::get(ui.ctx());
         ui.set_width(420.0);
-        Self::title(ui, crate::icons::app(id), &format!("Uninstall {}?", entry.app.name), "");
+        Self::title(ui, crate::icons::app(id), &fmt(tl!("Uninstall {name}?"), &[("name", entry.app.name)]), "");
         let how = match entry.installed.as_ref().map(|i| i.source) {
-            Some(suitedock_core::InstallSource::MacApp) => "The app will be moved to the Trash. Your documents and settings stay.",
-            Some(suitedock_core::InstallSource::Msi) => "Windows will remove it like any installed program. Your documents and settings stay.",
-            Some(suitedock_core::InstallSource::Deb | suitedock_core::InstallSource::Rpm | suitedock_core::InstallSource::Pacman) => {
-                "Your system's package manager will remove it, and may ask for your password. Your documents and settings stay."
+            Some(artcraft_launcher_core::InstallSource::MacApp) => tl!("The app will be moved to the Trash. Your documents and settings stay."),
+            Some(artcraft_launcher_core::InstallSource::Msi) => {
+                tl!("Windows will remove it like any installed program. Your documents and settings stay.")
             }
-            _ => "The app will be removed. Your documents and settings stay.",
+            Some(
+                artcraft_launcher_core::InstallSource::Deb
+                | artcraft_launcher_core::InstallSource::Rpm
+                | artcraft_launcher_core::InstallSource::Pacman,
+            ) => tl!("Your system's package manager will remove it, and may ask for your password. Your documents and settings stay."),
+            _ => tl!("The app will be removed. Your documents and settings stay."),
         };
         ui.label(RichText::new(how).color(t.muted));
         ui.add_space(20.0);
         let mut close = false;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::button(ui, "Uninstall", Kind::Danger, 110.0).clicked() {
-                self.send(Command::Uninstall { app: id.to_string() });
-                close = true;
-            }
-            if widgets::button(ui, "Cancel", Kind::Secondary, 90.0).clicked() {
-                close = true;
-            }
+        // A row: a right-to-left layout straight in the column would fill the height left.
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::button(ui, tl!("Uninstall"), Kind::Danger, 110.0).clicked() {
+                    self.act_command(Command::Uninstall { app: id.to_string() });
+                    close = true;
+                }
+                if widgets::button(ui, tl!("Cancel"), Kind::Secondary, 90.0).clicked() {
+                    close = true;
+                }
+            });
         });
         close
     }
 
-    fn settings_dialog(&mut self, ui: &mut egui::Ui, host: &mut dyn Host) -> bool {
+    /// Warns that `path` already exists and asks whether to replace it, returning `true` when the
+    /// dialog should close, including when the app entry is gone. `Replace` is queued at the action
+    /// boundary, not sent inline.
+    fn replace_dialog(&mut self, ui: &mut egui::Ui, id: &str, path: &str) -> bool {
+        let Some(app) = self.entry(id).map(|e| e.app) else { return true };
         let t = Tokens::get(ui.ctx());
-        // Wide enough for the community buttons and every social icon on one row.
-        ui.set_width(520.0);
-        Self::title(ui, Some(crate::icons::suitedock_mark()), "Settings", &format!("SuiteDock {}", env!("CARGO_PKG_VERSION")));
-        let section = |ui: &mut egui::Ui, s: &str| {
-            ui.add_space(14.0);
-            widgets::hud(ui, s, t.faint);
-            ui.add_space(6.0);
-        };
-        let row = |ui: &mut egui::Ui, label: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| add(ui));
-            });
-        };
-
-        section(ui, "Updates");
-        let mut every = self.settings.check_every;
-        row(ui, "Check for updates", &mut |ui| {
-            egui::ComboBox::from_id_salt("every").selected_text(every.label()).width(150.0).show_ui(ui, |ui| {
-                for e in CheckEvery::ALL {
-                    ui.selectable_value(&mut every, e, e.label());
+        ui.set_width(440.0f32.min(ui.ctx().content_rect().width() - 80.0));
+        Self::title(ui, crate::icons::app(id), tl!("Replace what's there?"), "");
+        ui.label(
+            RichText::new(fmt(tl!("{path} already exists. Installing {name} will overwrite it."), &[("path", path), ("name", app.name)]))
+                .color(t.muted),
+        );
+        ui.add_space(20.0);
+        let mut close = false;
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::button(ui, tl!("Replace"), Kind::Danger, 110.0).clicked() {
+                    self.act_command(Command::Replace { app: id.to_string() });
+                    close = true;
+                }
+                if widgets::button(ui, tl!("Cancel"), Kind::Secondary, 90.0).clicked() {
+                    close = true;
                 }
             });
         });
-        self.settings.check_every = every;
-        ui.checkbox(&mut self.settings.notify, "Notify me when an installed app has an update");
-        ui.checkbox(&mut self.settings.prereleases, "Include pre-releases (betas and release candidates)");
+        close
+    }
 
-        if self.caps.manage_apps && self.platform.is_some_and(|p| p.os == Os::Linux) {
-            section(ui, "Installing on Linux");
-            let mut choice = self.settings.preferred_kinds.first().copied();
-            row(ui, "Install new apps as", &mut |ui| {
-                let label = choice.map_or("System package (recommended)", PackageKind::label);
-                egui::ComboBox::from_id_salt("kind").selected_text(label).width(210.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut choice, None, "System package (recommended)");
-                    for k in [PackageKind::Deb, PackageKind::Rpm, PackageKind::Flatpak, PackageKind::AppImage] {
-                        ui.selectable_value(&mut choice, Some(k), k.label());
-                    }
-                });
-            });
-            self.settings.preferred_kinds = choice.into_iter().collect();
-            ui.label(RichText::new("Updates always use the format an app was installed with.").size(12.0).color(t.muted));
+    /// Lets the user choose this app's install folder and returns `true` when the dialog should
+    /// close, including when the app entry is gone. An empty field removes the per-app override, a
+    /// non-empty one persists it, and any changed configuration is sent before the install is queued. The path
+    /// itself is not validated here.
+    fn install_dialog(&mut self, ui: &mut egui::Ui, id: &str, folder: &mut String, host: &mut dyn Host) -> bool {
+        let Some(app) = self.entry(id).map(|e| e.app) else { return true };
+        ui.set_width(440.0f32.min(ui.ctx().content_rect().width() - 80.0));
+        Self::title(ui, None, app.name, tl!("Install folder"));
+        let default = self.settings.install_locations.root.clone().or_else(|| self.default_folder_for(id, host));
+        Self::folder_field(ui, folder, default.as_deref(), host);
+        if self.platform.is_some_and(|p| p.os == Os::Linux) {
+            ui.label(tl!("Custom folders use AppImage on Linux."));
         }
-
-        if self.caps.manage_apps {
-            section(ui, "Running in the background");
-            if host.has_tray() {
-                ui.checkbox(&mut self.settings.close_to_tray, "Keep running in the tray when the window is closed");
-            }
-            if host.has_desktops() {
-                ui.checkbox(&mut self.settings.show_on_current_desktop, "Show the window on the current desktop")
-                    .on_hover_text("When on, opening the launcher from the menu bar brings its window to the desktop you're on. When off, macOS switches you to the desktop the window was on.");
-            }
-            if let Some(mut on) = host.login_item()
-                && ui.checkbox(&mut on, "Start SuiteDock when I log in").changed()
-                && let Err(e) = host.set_login_item(on)
-            {
-                let ctx = ui.ctx().clone();
-                self.toast(&ctx, format!("Couldn't change the login item: {e}"), true);
-            }
-        }
-
-        section(ui, "About SuiteDock");
-        ui.label(RichText::new("Independent fork based on ArtCraft Launcher by the ArtCraft team.").color(t.muted));
-        if widgets::button(ui, "SuiteDock source", Kind::Secondary, 0.0).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab("https://github.com/ripDZL/craft-launcher"));
-        }
-
-        section(ui, "Craft App Suite community");
-        ui.label(RichText::new("Questions, ideas and news from the ArtCraft team").color(t.muted));
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            use suitedock_core::catalog::{DISCORD_URL, GITHUB_URL, WEBSITE_URL};
-            if widgets::button(ui, "Join the Discord", Kind::Primary, 0.0).on_hover_text(DISCORD_URL).clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(DISCORD_URL));
-            }
-            if widgets::button(ui, "Website", Kind::Secondary, 0.0).on_hover_text(WEBSITE_URL).clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(WEBSITE_URL));
-            }
-            if widgets::button(ui, "GitHub", Kind::Secondary, 0.0).on_hover_text(GITHUB_URL).clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(GITHUB_URL));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                widgets::social_icons(ui, 16.0);
-            });
-        });
-
-        section(ui, "Appearance");
-        ui.checkbox(&mut self.settings.show_social_links, "Show community and social links outside Settings").on_hover_text(
-            "Shows Discord, GitHub, Website and social icons in the main window. Community links inside Settings are always available.",
-        );
-        ui.add_space(8.0);
-        let mut theme_choice = self.settings.theme;
-        ui.horizontal(|ui| {
-            widgets::cells(ui, &mut theme_choice, &ThemeChoice::ALL.map(|c| (c, Cell { label: c.label(), tip: c.label(), count: None })));
-        });
-        self.settings.theme = theme_choice;
-
-        ui.add_space(24.0);
+        ui.add_space(14.0);
         let mut close = false;
         ui.horizontal(|ui| {
-            if self.caps.manage_apps && widgets::button(ui, "Quit SuiteDock", Kind::Secondary, 0.0).clicked() {
-                host.quit();
+            if widgets::button(ui, tl!("Install"), Kind::Primary, 100.0).clicked() {
+                if folder.is_empty() {
+                    self.settings.install_locations.per_app.remove(id);
+                } else {
+                    self.settings.install_locations.per_app.insert(id.to_string(), folder.clone());
+                }
+                self.configure();
+                self.act_command(Command::Install { app: id.to_string() });
+                close = true;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close = widgets::button(ui, "Done", Kind::Primary, 90.0).clicked();
-            });
+            close |= widgets::button(ui, tl!("Cancel"), Kind::Secondary, 90.0).clicked();
         });
         close
+    }
+
+    pub(crate) fn folder_field(ui: &mut egui::Ui, folder: &mut String, default: Option<&str>, host: &mut dyn Host) {
+        let label = ui.label(tl!("Install folder"));
+        ui.add(
+            egui::TextEdit::singleline(folder)
+                .id_salt("install_folder")
+                .hint_text(default.unwrap_or(tl!("System default")))
+                .desired_width(f32::INFINITY),
+        )
+        .labelled_by(label.id);
+        ui.label(tl!("Apps are placed inside this folder."));
+        ui.horizontal(|ui| {
+            if widgets::button(ui, tl!("Browse…"), Kind::Secondary, 100.0).clicked()
+                && let Some(selected) = host.pick_folder(if folder.is_empty() { default } else { Some(folder.as_str()) })
+            {
+                *folder = selected;
+            }
+            if widgets::button(ui, tl!("Use default"), Kind::Secondary, 120.0).clicked() {
+                folder.clear();
+            }
+        });
     }
 }

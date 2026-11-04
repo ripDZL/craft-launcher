@@ -1,4 +1,5 @@
 SuiteDock original artwork
 
 Copyright (c) 2026 SuiteDock contributors.
-All SuiteDock artwork in this directory is offered under MIT OR Apache-2.0, as in the repository root. It replaces the upstream ArtCraft marks; it does not reuse or adapt them.
+All SuiteDock artwork in this repository is offered under MIT OR Apache-2.0, as in the repository root.
+It replaces the upstream ArtCraft Launcher marks; it does not reuse or adapt those protected marks.

@@ -1,3 +1,9 @@
-# SuiteDock app icon
+# SuiteDock application icon
 
-Original tiled dock/play mark; MIT OR Apache-2.0. Sources are in `docs/brand/`. Run `packaging/icons.sh` with resvg, or `packaging/render-icons.ps1` on Windows. Both produce the same assets from the SVG geometry. Committed renders keep normal builds independent of the renderer.
+The SuiteDock icon is original fork artwork: a dock/play mark used by the desktop application,
+installers, tray/menu-bar icon and platform packages.
+
+Source: `assets/app-icon/suitedock.svg`
+Application id: `io.github.ripdzl.suitedock`
+
+The artwork is licensed MIT OR Apache-2.0 with the repository. See `LICENSE.txt`.

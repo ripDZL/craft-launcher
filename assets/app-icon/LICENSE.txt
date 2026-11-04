@@ -1,1 +1,5 @@
-SuiteDock original icon renders. Copyright (c) 2026 SuiteDock contributors. MIT OR Apache-2.0. Sources: docs/brand/suitedock-mark.svg and suitedock-mark-black.svg.
+SuiteDock original artwork
+
+Copyright (c) 2026 SuiteDock contributors.
+All SuiteDock artwork in this repository is offered under MIT OR Apache-2.0, as in the repository root.
+It replaces the upstream ArtCraft Launcher marks; it does not reuse or adapt those protected marks.

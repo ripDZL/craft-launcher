@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Regenerate every app and tray icon from original SuiteDock SVG geometry (MIT OR Apache-2.0).
+# Regenerate every app and tray icon from the ArtCraft "A" mark in docs/brand/, rendered exactly as
+# supplied. The mark is an ArtCraft trademark, NOT MIT/Apache: docs/brand/LICENSE-brand.txt.
 #
 # - App icon (Dock, taskbar, Start menu, Linux menus, installers): the blue mark, which is also
-#   generated from our original dock/play geometry.
+#   getartcraft.com's favicon.
 # - Tray: the black mark as the macOS menu-bar template; the blue mark on Windows, Linux and BSD.
 #
 # Needs: resvg (brew install resvg / cargo install resvg). The .ico and .icns are packed by
@@ -21,10 +22,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 command -v resvg >/dev/null || { echo "error: resvg not found (brew install resvg)" >&2; exit 1; }
 
-MAC="$SVG"
+# The mark's artwork is untouched. macOS icons get a little more transparent margin (Apple's
+# 824/1024 icon grid) by widening the view box around it; everything else uses the file as is.
+BOX='viewBox="-10 -19.42 136.34 136.34"'
+grep -q "$BOX" "$SVG" || { echo "error: expected $BOX in $SVG" >&2; exit 1; }
+MAC="$TMP/mac.svg"
+sed "s/$BOX/viewBox=\"-17.5 -26.92 151.34 151.34\"/" "$SVG" >"$MAC"
 FLAT="$SVG"
 
-render() { resvg -w "$2" -h "$2" "$1" "$3" </dev/null; }
+render() {
+  local src="$1" size="$2" out="$3"
+  resvg -w "$size" -h "$size" "$src" "$out" </dev/null
+}
 
 render "$MAC" 1024 "$DIR/suitedock-1024.png"
 
@@ -58,8 +67,3 @@ done
 render "$BRAND/suitedock-mark-black.svg" 44 "$BRAND/suitedock-mark-black-44.png"
 render "$BRAND/suitedock-mark.svg" 64 "$BRAND/suitedock-mark-64.png"
 echo "icons written to $DIR"
-
-# Category icons and installer wordmark use the same original vector sources.
-for file in "$ROOT"/assets/app-icons/*.svg; do render "$file" 128 "${file%.svg}.png"; done
-resvg "$BRAND/suitedock-logo.svg" "$BRAND/suitedock-logo.png" </dev/null
-resvg "$BRAND/suitedock-logo-white.svg" "$BRAND/suitedock-logo-white.png" </dev/null

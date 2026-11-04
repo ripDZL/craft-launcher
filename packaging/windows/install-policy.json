@@ -1,0 +1,53 @@
+{
+  "id": "suitedock",
+  "name": "SuiteDock",
+  "mode": "perUser",
+  "upgradeCode": "1AC08DBF-D4CF-4BA4-A81E-CAA5C1004974",
+  "sources": [
+    "suitedock.wxs"
+  ],
+  "icon": "assets/app-icon/suitedock.ico",
+  "localization": [
+    "suitedock.en-us.wxl"
+  ],
+  "extensions": [
+    "UI",
+    "Util"
+  ],
+  "payloads": [
+    "NOTICE",
+    "suitedock.exe"
+  ],
+  "registry": [
+    [
+      "1",
+      "Software\\ripDZL\\SuiteDock",
+      "InstallDir",
+      "[INSTALLFOLDER]"
+    ],
+    [
+      "1",
+      "Software\\ripDZL\\SuiteDock",
+      "DesktopShortcutChoice",
+      "[DESKTOPSHORTCUTCHOICE]"
+    ],
+    [
+      "1",
+      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\suitedock.exe",
+      "",
+      "[#SuiteDockExe]"
+    ],
+    [
+      "1",
+      "Software\\ripDZL\\SuiteDock",
+      "StartMenuShortcut",
+      "#1"
+    ],
+    [
+      "1",
+      "Software\\ripDZL\\SuiteDock",
+      "DesktopShortcut",
+      "#1"
+    ]
+  ]
+}
